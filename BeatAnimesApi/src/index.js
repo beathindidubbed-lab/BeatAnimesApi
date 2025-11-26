@@ -13,7 +13,7 @@ import {
     getAnilistSearch,
     getAnilistAnime,
     getAnilistUpcoming,
-} from "./anilist";
+} from "./anilist.js";
 import { SaveError } from "./errorHandler";
 import { increaseViews } from "./statsHandler";
 
@@ -421,4 +421,5 @@ async function selfPing() {
 
 // Start self-ping after deployment
 setInterval(selfPing, SELF_PING_INTERVAL);
+
 
