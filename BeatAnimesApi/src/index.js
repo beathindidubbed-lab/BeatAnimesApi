@@ -390,3 +390,34 @@ export default {
         }
     },
 };
+// Ping endpoint to check if service is alive
+addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  
+  if (url.pathname === '/ping') {
+    event.respondWith(new Response(JSON.stringify({ 
+      status: 'alive', 
+      timestamp: Date.now() 
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    }));
+    return;
+  }
+  
+  // Your existing route handlers...
+});
+
+// Self-ping every 14 minutes
+const SELF_PING_INTERVAL = 14 * 60 * 1000; // 14 minutes
+
+async function selfPing() {
+  try {
+    const response = await fetch('https://beatanimes-api.onrender.com/ping');
+    console.log('Self-ping:', response.ok ? 'Success' : 'Failed');
+  } catch (error) {
+    console.log('Self-ping error:', error.message);
+  }
+}
+
+// Start self-ping after deployment
+setInterval(selfPing, SELF_PING_INTERVAL);
