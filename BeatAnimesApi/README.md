@@ -8,12 +8,11 @@ Thank you for your understanding and support during the project's active phase! 
 
 ### Project Links :
 
-<p>Telegram Support Group : <a href=https://telegram.me/TechZBots_Support>@TechZBots_Support</a>
-<p>Beat AnimesLite Repository : <a href=https://github.com/TechShreyash/Beat AnimesLite>TechShreyash/Beat AnimesLite</a>
-<p>Beat Animes Api Repository : <a href=https://github.com/TechShreyash/Beat AnimesApi>TechShreyash/Beat AnimesApi</a>
-<p>Beat Animes Proxy Repository : <a href=https://github.com/TechShreyash/CloudflareWorker/tree/main/Beat Animesproxy>TechShreyash/Beat Animesproxy</a>
-<p>ThumbGen Api Repository : <a href=https://github.com/TechShreyash/ThumbApi>TechShreyash/ThumbApi</a>
-<p>Stats Api Repository : <a href=https://github.com/TechShreyash/StatsApi>TechShreyash/StatsApi</a>
+<p>Telegram Support Group : <a href=https://t.me/Beat_Anime_Discussion>@Beat Anime</a>
+
+
+
+
 
 ## Beat AnimesApi
 
@@ -23,13 +22,7 @@ Thank you for your understanding and support during the project's active phase! 
 
 Documentation : https://api.anime-dex.workers.dev
 
-## Deploy To Cloudflare (Easy Way)
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/TechShreyash/Beat AnimesApi)
-
-### Deploy Tutorial
-
-https://github.com/TechShreyash/Beat AnimesApi/assets/82265247/da97a941-4f46-42ec-beaf-3c7e1f31f0aa
 
 ## Deploy To Cloudflare (Hard Way)
 
@@ -69,4 +62,5 @@ wrangler deploy
 
 Stay informed about the latest updates by joining our channels / groups :
 
-[![Telegram Channel](https://img.shields.io/static/v1?label=Join&message=Telegram%20Channel&color=blueviolet&style=for-the-badge&logo=telegram&logoColor=violet)](https://telegram.me/TechZBots) [![Telegram Group](https://img.shields.io/static/v1?label=Join&message=Telegram%20Group&color=blueviolet&style=for-the-badge&logo=telegram&logoColor=violet)](https://telegram.me/TechZBots_Support)
+[![Telegram Channel](https://img.shields.io/static/v1?label=Join&message=Telegram%20Channel&color=blueviolet&style=for-the-badge&logo=telegram&logoColor=violet)](https://telegram.me/BeatAnime) [![Telegram Group](https://img.shields.io/static/v1?label=Join&message=Telegram%20Group&color=blueviolet&style=for-the-badge&logo=telegram&logoColor=violet)](https://t.me/Beat_Anime_Discussion)
+
