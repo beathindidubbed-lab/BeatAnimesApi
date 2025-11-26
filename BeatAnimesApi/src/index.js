@@ -1,3 +1,6 @@
+import http from "http";
+import { URL } from "url"; // Needed for handling request URLs
+
 import {
     getSearch,
     getAnime,
@@ -55,11 +58,31 @@ function handleOptions(request) {
 
 // CORS Fix End
 
-export default {
-    async fetch(request, env, ctx) {
+// Render will automatically set the PORT environment variable. We use 8000 as a fallback.
+const PORT = process.env.PORT || 8000;
+
+// Create a standard Node.js HTTP server
+http.createServer(async (req, res) => {
+    let response;
+
+    try {
+        // --- 1. Adapt Node.js request to Worker-style request ---
+        // Node.js v22 includes the global 'fetch' API, which defines 'Response' and 'Headers'
+        // We simulate the Worker's 'request' object for the original logic to work.
+        const fullUrl = new URL(req.url, `http://${req.headers.host}`);
+        
+        const request = {
+            method: req.method,
+            url: fullUrl.href,
+            // Convert Node.js headers to a Worker-compatible Headers object
+            headers: new Headers(req.headers),
+        };
+
+        // --- 2. Worker 'fetch' function logic (copied from original file) ---
+        
         if (request.method === "OPTIONS") {
             // Handle CORS preflight requests
-            return handleOptions(request);
+            response = handleOptions(request);
         } else if (
             request.method === "GET" ||
             request.method === "HEAD" ||
@@ -92,26 +115,29 @@ export default {
                         const json = JSON.stringify({
                             results: SEARCH_CACHE[query + page.toString()],
                         });
-                        return new Response(json, {
+                        response = new Response(json, {
                             headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                         });
                     }
                 }
-                const data = await getSearch(query, page);
+                
+                if (!response) {
+                    const data = await getSearch(query, page);
 
-                if (data.length == 0) {
-                    throw new Error("Not found");
+                    if (data.length == 0) {
+                        throw new Error("Not found");
+                    }
+
+                    SEARCH_CACHE[query + page.toString()] = data;
+                    SEARCH_CACHE[`time_${query + page.toString()}`] = Math.floor(
+                        Date.now() / 1000
+                    );
+                    const json = JSON.stringify({ results: data });
+
+                    response = new Response(json, {
+                        headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                    });
                 }
-
-                SEARCH_CACHE[query + page.toString()] = data;
-                SEARCH_CACHE[`time_${query + page.toString()}`] = Math.floor(
-                    Date.now() / 1000
-                );
-                const json = JSON.stringify({ results: data });
-
-                return new Response(json, {
-                    headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
-                });
             } else if (url.includes("/home")) {
                 const headers = request.headers;
                 await increaseViews(headers);
@@ -123,37 +149,40 @@ export default {
                         const json = JSON.stringify({
                             results: HOME_CACHE["data"],
                         });
-                        return new Response(json, {
+                        response = new Response(json, {
                             headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                         });
                     }
                 }
-                let anilistTrending = [];
-                let gogoPopular = [];
-                try {
-                    anilistTrending = (await getAnilistTrending())["results"];
-                } catch (err) {
-                    anilistTrending = [];
-                }
-                try {
-                    gogoPopular = await getPopularAnime();
-                } catch (err) {
-                    gogoPopular = [];
-                }
-                const data = { anilistTrending, gogoPopular };
+                
+                if (!response) {
+                    let anilistTrending = [];
+                    let gogoPopular = [];
+                    try {
+                        anilistTrending = (await getAnilistTrending())["results"];
+                    } catch (err) {
+                        anilistTrending = [];
+                    }
+                    try {
+                        gogoPopular = await getPopularAnime();
+                    } catch (err) {
+                        gogoPopular = [];
+                    }
+                    const data = { anilistTrending, gogoPopular };
 
-                if ((anilistTrending.length == 0) & (gogoPopular.length == 0)) {
-                    throw new Error("Something went wrong!");
-                }
-                if ((anilistTrending.length != 0) & (gogoPopular.length != 0)) {
-                    HOME_CACHE["data"] = data;
-                    HOME_CACHE["time"] = Math.floor(Date.now() / 1000);
-                }
-                const json = JSON.stringify({ results: data });
+                    if ((anilistTrending.length == 0) & (gogoPopular.length == 0)) {
+                        throw new Error("Something went wrong!");
+                    }
+                    if ((anilistTrending.length != 0) & (gogoPopular.length != 0)) {
+                        HOME_CACHE["data"] = data;
+                        HOME_CACHE["time"] = Math.floor(Date.now() / 1000);
+                    }
+                    const json = JSON.stringify({ results: data });
 
-                return new Response(json, {
-                    headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
-                });
+                    response = new Response(json, {
+                        headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                    });
+                }
             } else if (url.includes("/anime/")) {
                 const headers = request.headers;
                 await increaseViews(headers);
@@ -169,46 +198,49 @@ export default {
                         const json = JSON.stringify({
                             results: data,
                         });
-                        return new Response(json, {
+                        response = new Response(json, {
                             headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                         });
                     }
                 }
-                let data;
-                try {
-                    data = await getAnime(anime);
-                    if (data.name == "") {
-                        throw new Error("Not found");
-                    }
-                    data.source = "gogoanime";
-                } catch (err) {
+                
+                if (!response) {
+                    let data;
                     try {
-                        // try to get by search on gogo
-                        const search = await getSearch(anime);
-                        anime = search[0].id;
                         data = await getAnime(anime);
+                        if (data.name == "") {
+                            throw new Error("Not found");
+                        }
                         data.source = "gogoanime";
                     } catch (err) {
-                        // try to get by search on anilist
-                        const search = await getAnilistSearch(anime);
-                        anime = search["results"][0].id;
-                        data = await getAnilistAnime(anime);
-                        data.source = "anilist";
+                        try {
+                            // try to get by search on gogo
+                            const search = await getSearch(anime);
+                            anime = search[0].id;
+                            data = await getAnime(anime);
+                            data.source = "gogoanime";
+                        } catch (err) {
+                            // try to get by search on anilist
+                            const search = await getAnilistSearch(anime);
+                            anime = search["results"][0].id;
+                            data = await getAnilistAnime(anime);
+                            data.source = "anilist";
+                        }
                     }
-                }
 
-                if (data == {}) {
-                    throw new Error("Not found");
-                }
-                if (data.episodes.length != 0) {
-                    ANIME_CACHE[anime] = data;
-                    ANIME_CACHE[`time_${anime}`] = Math.floor(Date.now() / 1000);
-                }
-                const json = JSON.stringify({ results: data });
+                    if (data == {}) {
+                        throw new Error("Not found");
+                    }
+                    if (data.episodes.length != 0) {
+                        ANIME_CACHE[anime] = data;
+                        ANIME_CACHE[`time_${anime}`] = Math.floor(Date.now() / 1000);
+                    }
+                    const json = JSON.stringify({ results: data });
 
-                return new Response(json, {
-                    headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
-                });
+                    response = new Response(json, {
+                        headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                    });
+                }
             } else if (url.includes("/episode/")) {
                 const headers = request.headers;
                 await increaseViews(headers);
@@ -217,7 +249,7 @@ export default {
                 const data = await getEpisode(id);
                 const json = JSON.stringify({ results: data });
 
-                return new Response(json, {
+                response = new Response(json, {
                     headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                 });
             } else if (url.includes("/download/")) {
@@ -250,7 +282,7 @@ export default {
                 const data = await GogoDLScrapper(query, cookie);
 
                 const json = JSON.stringify({ results: data });
-                return new Response(json, {
+                response = new Response(json, {
                     headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                 });
             } else if (url.includes("/recent/")) {
@@ -266,25 +298,27 @@ export default {
                         const json = JSON.stringify({
                             results: RECENT_CACHE[page],
                         });
-                        return new Response(json, {
+                        response = new Response(json, {
                             headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                         });
                     }
                 }
+                
+                if (!response) {
+                    const data = await getRecentAnime(page);
 
-                const data = await getRecentAnime(page);
+                    if (data.length == 0) {
+                        throw new Error("Not found");
+                    }
 
-                if (data.length == 0) {
-                    throw new Error("Not found");
+                    const json = JSON.stringify({ results: data });
+                    RECENT_CACHE[page] = data;
+                    RECENT_CACHE[`time_${page}`] = Math.floor(Date.now() / 1000);
+
+                    response = new Response(json, {
+                        headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                    });
                 }
-
-                const json = JSON.stringify({ results: data });
-                RECENT_CACHE[page] = data;
-                RECENT_CACHE[`time_${page}`] = Math.floor(Date.now() / 1000);
-
-                return new Response(json, {
-                    headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
-                });
             } else if (url.includes("/recommendations/")) {
                 const headers = request.headers;
                 await increaseViews(headers);
@@ -295,26 +329,28 @@ export default {
                     const json = JSON.stringify({
                         results: REC_CACHE[query],
                     });
-                    return new Response(json, {
+                    response = new Response(json, {
                         headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                     });
                 }
+                
+                if (!response) {
+                    const search = await getAnilistSearch(query);
+                    const anime = search["results"][0].id;
+                    let data = await getAnilistAnime(anime);
+                    data = data["recommendations"];
 
-                const search = await getAnilistSearch(query);
-                const anime = search["results"][0].id;
-                let data = await getAnilistAnime(anime);
-                data = data["recommendations"];
+                    if (data.length == 0) {
+                        throw new Error("Not found");
+                    }
 
-                if (data.length == 0) {
-                    throw new Error("Not found");
+                    REC_CACHE[query] = data;
+                    const json = JSON.stringify({ results: data });
+
+                    response = new Response(json, {
+                        headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                    });
                 }
-
-                REC_CACHE[query] = data;
-                const json = JSON.stringify({ results: data });
-
-                return new Response(json, {
-                    headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
-                });
             } else if (url.includes("/gogoPopular/")) {
                 const headers = request.headers;
                 await increaseViews(headers);
@@ -328,20 +364,22 @@ export default {
                         const json = JSON.stringify({
                             results: GP_CACHE[page],
                         });
-                        return new Response(json, {
+                        response = new Response(json, {
                             headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                         });
                     }
                 }
+                
+                if (!response) {
+                    let data = await getPopularAnime(page, 20);
+                    GP_CACHE[page] = data;
 
-                let data = await getPopularAnime(page, 20);
-                GP_CACHE[page] = data;
+                    const json = JSON.stringify({ results: data });
 
-                const json = JSON.stringify({ results: data });
-
-                return new Response(json, {
-                    headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
-                });
+                    response = new Response(json, {
+                        headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                    });
+                }
             } else if (url.includes("/upcoming/")) {
                 const headers = request.headers;
                 await increaseViews(headers);
@@ -355,72 +393,71 @@ export default {
                         const json = JSON.stringify({
                             results: AT_CACHE[page],
                         });
-                        return new Response(json, {
+                        response = new Response(json, {
                             headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
                         });
                     }
                 }
+                
+                if (!response) {
+                    let data = await getAnilistUpcoming(page);
+                    data = data["results"];
+                    AT_CACHE[page] = data;
 
-                let data = await getAnilistUpcoming(page);
-                data = data["results"];
-                AT_CACHE[page] = data;
+                    const json = JSON.stringify({ results: data });
 
-                const json = JSON.stringify({ results: data });
+                    response = new Response(json, {
+                        headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                    });
+                }
+            }
+            
+            if (!response) {
+                // Default landing page response (copied from original)
+                const text =
+                    '<!doctype html><html lang=en><meta charset=UTF-8><meta content="width=device-width,initial-scale=1"name=viewport><title>Beat Animes API</title><style>body{font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif;margin:0;padding:0;background-color:#f8f9fa;color:#495057;line-height:1.6}header{background-color:#343a40;color:#fff;text-align:center;padding:1.5em 0;margin-bottom:1em}h1{margin-bottom:.5em;font-size:2em;color:#17a2b8}p{color:#6c757d;margin-bottom:1.5em}code{background-color:#f3f4f7;padding:.2em .4em;border-radius:4px;font-family:"Courier New",Courier,monospace;color:#495057}.container{margin:1em;padding:1em;background-color:#fff;border-radius:8px;box-shadow:0 0 10px rgba(0,0,0,.1)}li,ul{list-style:none;padding:0;margin:0}li{margin-bottom:.5em}li code{background-color:#e5e7eb;color:#495057}a{color:#17a2b8;text-decoration:none}a:hover{text-decoration:underline}footer{background-color:#343a40;color:#fff;padding:1em 0;text-align:center}.sample-request{margin-top:1em}.toggle-response{cursor:pointer;color:#17a2b8;text-decoration:underline}.sample-response{display:none;margin-top:1em}pre{background-color:#f3f4f7;padding:1em;border-radius:4px;overflow-x:auto}</style><header><h1>API Dashboard</h1><p>The Beat Animes API provides access to a wide range of anime-related data.<p class=support>For support, visit our <a href=https://telegram.me/TechZBots_Support target=_blank>Telegram Support Channel</a>.</header><div class=container><h2>API Description:</h2><p>The Beat Animes API allows you to access various anime-related data, including search, anime details, episodes, downloads, recent releases, recommendations, popular anime, and upcoming releases. Data is scraped from gogoanime and anilist.</div><div class=container><h2>Routes:</h2><ul><li><code>/home</code> - Get trending anime from Anilist and popular anime from GogoAnime<li><code>/search/{query}</code> - Search for anime by name (query = anime name)<li><code>/anime/{id}</code> - Get details of a specific anime (id = gogoanime anime id)<li><code>/episode/{id}</code> - Get episode stream urls (id = gogoanime episode id)<li><code>/download/{id}</code> - Get episode download urls (id = gogoanime episode id)<li><code>/recent/{page}</code> - Get recent animes from gogoanime (page = 1,2,3...)<li><code>/recommendations/{query}</code> - Get recommendations of anime from anilist (id = anime name)<li><code>/gogoPopular/{page}</code> - Get popular animes from gogoanime (page = 1,2,3...)<li><code>/upcoming/{page}</code> - Get upcoming animes from anilist (page = 1,2,3...)</ul></div><div class=container><h2>Support and Contact:</h2><p>For support and questions, visit our <a href=https://telegram.me/TechZBots_Support target=_blank>Telegram Support Channel </a>.</div><footer><p>© 2024 Beat Animes API. All rights reserved.</footer>';
 
-                return new Response(json, {
-                    headers: { "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+                response = new Response(text, {
+                    headers: {
+                        "content-type": "text/html",
+                        "Access-Control-Allow-Origin": "*",
+                        Vary: "Origin",
+                    },
                 });
             }
-
-            const text =
-                '<!doctype html><html lang=en><meta charset=UTF-8><meta content="width=device-width,initial-scale=1"name=viewport><title>Beat Animes API</title><style>body{font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif;margin:0;padding:0;background-color:#f8f9fa;color:#495057;line-height:1.6}header{background-color:#343a40;color:#fff;text-align:center;padding:1.5em 0;margin-bottom:1em}h1{margin-bottom:.5em;font-size:2em;color:#17a2b8}p{color:#6c757d;margin-bottom:1.5em}code{background-color:#f3f4f7;padding:.2em .4em;border-radius:4px;font-family:"Courier New",Courier,monospace;color:#495057}.container{margin:1em;padding:1em;background-color:#fff;border-radius:8px;box-shadow:0 0 10px rgba(0,0,0,.1)}li,ul{list-style:none;padding:0;margin:0}li{margin-bottom:.5em}li code{background-color:#e5e7eb;color:#495057}a{color:#17a2b8;text-decoration:none}a:hover{text-decoration:underline}footer{background-color:#343a40;color:#fff;padding:1em 0;text-align:center}.sample-request{margin-top:1em}.toggle-response{cursor:pointer;color:#17a2b8;text-decoration:underline}.sample-response{display:none;margin-top:1em}pre{background-color:#f3f4f7;padding:1em;border-radius:4px;overflow-x:auto}</style><header><h1>API Dashboard</h1><p>The Beat Animes API provides access to a wide range of anime-related data.<p class=support>For support, visit our <a href=https://telegram.me/TechZBots_Support target=_blank>Telegram Support Channel</a>.</header><div class=container><h2>API Description:</h2><p>The Beat Animes API allows you to access various anime-related data, including search, anime details, episodes, downloads, recent releases, recommendations, popular anime, and upcoming releases. Data is scraped from gogoanime and anilist.</div><div class=container><h2>Routes:</h2><ul><li><code>/home</code> - Get trending anime from Anilist and popular anime from GogoAnime<li><code>/search/{query}</code> - Search for anime by name (query = anime name)<li><code>/anime/{id}</code> - Get details of a specific anime (id = gogoanime anime id)<li><code>/episode/{id}</code> - Get episode stream urls (id = gogoanime episode id)<li><code>/download/{id}</code> - Get episode download urls (id = gogoanime episode id)<li><code>/recent/{page}</code> - Get recent animes from gogoanime (page = 1,2,3...)<li><code>/recommendations/{query}</code> - Get recommendations of anime from anilist (id = anime name)<li><code>/gogoPopular/{page}</code> - Get popular animes from gogoanime (page = 1,2,3...)<li><code>/upcoming/{page}</code> - Get upcoming animes from anilist (page = 1,2,3...)</ul></div><div class=container><h2>Support and Contact:</h2><p>For support and questions, visit our <a href=https://telegram.me/TechZBots_Support target=_blank>Telegram Support Channel </a>.</div><footer><p>© 2024 Beat Animes API. All rights reserved.</footer>';
-
-            return new Response(text, {
-                headers: {
-                    "content-type": "text/html",
-                    "Access-Control-Allow-Origin": "*",
-                    Vary: "Origin",
-                },
-            });
         } else {
-            return new Response(null, {
+            response = new Response(null, {
                 status: 405,
                 statusText: "Method Not Allowed",
             });
         }
-    },
-};
-// Ping endpoint to check if service is alive
-addEventListener('fetch', event => {
-  const url = new URL(event.request.url);
-  
-  if (url.pathname === '/ping') {
-    event.respondWith(new Response(JSON.stringify({ 
-      status: 'alive', 
-      timestamp: Date.now() 
-    }), {
-      headers: { 'Content-Type': 'application/json' }
-    }));
-    return;
-  }
-  
-  // Your existing route handlers...
+    } catch (e) {
+        // --- Error Handling ---
+        console.error("API Error:", e.stack);
+        // The original code uses a worker global 'request' object, we use our simulated one.
+        await SaveError(e.message, request.url); 
+        
+        const json = JSON.stringify({ error: e.message || "Internal Server Error" });
+        response = new Response(json, {
+            status: 500,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", Vary: "Origin" },
+        });
+    }
+
+    // --- 3. Convert Worker-style Response to Node.js response ---
+    // Extract status and headers
+    res.writeHead(response.status || 200, Object.fromEntries(response.headers.entries()));
+    
+    // Write the body
+    if (response.body) {
+        // Use response.text() as most responses are JSON/HTML text
+        const bodyText = await response.text();
+        res.end(bodyText);
+    } else {
+        res.end();
+    }
+
+}).listen(PORT, () => {
+    // This message confirms to Render that the service is running
+    console.log(`Beat Animes API listening on port ${PORT}`);
 });
-
-// Self-ping every 14 minutes
-const SELF_PING_INTERVAL = 14 * 60 * 1000; // 14 minutes
-
-async function selfPing() {
-  try {
-    const response = await fetch('https://beatanimes-api.onrender.com/ping');
-    console.log('Self-ping:', response.ok ? 'Success' : 'Failed');
-  } catch (error) {
-    console.log('Self-ping error:', error.message);
-  }
-}
-
-// Start self-ping after deployment
-setInterval(selfPing, SELF_PING_INTERVAL);
-
-
-
