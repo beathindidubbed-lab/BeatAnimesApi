@@ -14,8 +14,8 @@ import {
     getAnilistAnime,
     getAnilistUpcoming,
 } from "./anilist.js";
-import { SaveError } from "./errorHandler";
-import { increaseViews } from "./statsHandler";
+import { SaveError } from "./errorHandler.js";
+import { increaseViews } from "./statsHandler.js";
 
 let CACHE = {};
 let HOME_CACHE = {};
@@ -421,5 +421,6 @@ async function selfPing() {
 
 // Start self-ping after deployment
 setInterval(selfPing, SELF_PING_INTERVAL);
+
 
 
