@@ -6,7 +6,7 @@ import {
     getEpisode,
     GogoDLScrapper,
     getGogoAuthKey,
-} from "./gogo";
+} from "./gogo.js";
 
 import {
     getAnilistTrending,
@@ -421,3 +421,4 @@ async function selfPing() {
 
 // Start self-ping after deployment
 setInterval(selfPing, SELF_PING_INTERVAL);
+
