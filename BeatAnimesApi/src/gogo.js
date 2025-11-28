@@ -3,29 +3,34 @@ import {
     decryptEncryptAjaxResponse,
 } from "./gogo_extractor.js";
 import cheerio from "cheerio";
-import { SaveError } from "./errorHandler.js"; 
 
-// UPDATED DOMAINS: Prioritizing the new domain provided by the user.
+// UPDATED: Try multiple working GogoAnime domains for improved reliability
 const GOGO_DOMAINS = [
-    "https://www.gogoanimes.watch", // **NEW Primary Domain**
+    "https://anitaku.pe",      // Current primary working domain
+    "https://gogoanime3.co",   // Backup
+    "https://gogoanime.hu",    // Backup
+    "https://gogoanimehd.io",  // Additional Backup
 ];
 
-let BaseURL = GOGO_DOMAINS[0]; // Start with the new working domain
+let BaseURL = GOGO_DOMAINS[0]; // Start with the first domain
 
 const USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /**
- * Function to try multiple domains if one fails, with clearer URL construction.
+ * Tries multiple domains until a successful fetch is made.
+ * If successful, it updates BaseURL to the working domain.
+ * @param {string} path The path to fetch (e.g., "/category/anime-name")
+ * @param {object} options Fetch options (headers, body, etc.)
+ * @returns {Promise<Response>} The fetch response
+ * @throws {Error} If all domains fail
  */
 async function fetchWithFallback(path, options = {}) {
-    let lastError = new new Error("Unknown connection error."); // Default error object
-
+    let lastError;
+    
     for (const domain of GOGO_DOMAINS) {
-        // Explicitly ensure correct URL construction
-        const url = `${domain}${path}`; 
         try {
-            console.log(`Attempting to fetch from: ${url}`); // Log the attempted URL for debugging
+            const url = domain + path;
             const response = await fetch(url, {
                 ...options,
                 headers: {
@@ -33,202 +38,346 @@ async function fetchWithFallback(path, options = {}) {
                     ...options.headers
                 }
             });
-
-            if (response.ok) {
-                BaseURL = domain; // Update to working domain
-                console.log(`Successfully connected to ${domain}`);
-                return response;
-            }
             
-            // If response is not ok, throw to trigger fallback/retry logic
-            throw new Error(`HTTP Status ${response.status} from ${domain}`);
-
+            // Check for OK response status (200-299)
+            if (response.ok) {
+                BaseURL = domain; // Update to the currently working domain
+                return response;
+            } else {
+                // If status is not OK (e.g., 404, 500, or cloudflare), throw an error to try the next domain
+                throw new Error(`Non-OK status: ${response.status} from ${domain}`);
+            }
         } catch (error) {
             lastError = error;
-            console.warn(`Attempt failed for ${domain}: ${error.message}`);
+            console.warn(`[GOGO Fallback] Domain ${domain} failed. Trying next. Error: ${error.message}`);
         }
     }
-    
-    // Log the final failure and rethrow
-    console.error("All GogoAnime domains failed. Last error:", lastError.message);
-    // Use the first domain as the last failed URL since BaseURL might not be set correctly if all fail
-    throw new Error(`Failed to connect to GogoAnime source after all retries. Last failed URL: ${GOGO_DOMAINS[0]}${path}`);
+
+    // If the loop finishes without returning a response, all domains failed
+    throw new Error(`All GogoAnime domains failed. Last error: ${lastError ? lastError.message : "Unknown error"}`);
 }
 
-
-async function getRecentAnime(page = 1) {
-    // Gogoanime uses an AJAX endpoint for recent releases
-    const urlPath = `/ajax/page-recent-release.html?page=${page}&type=1`; // type=1 for Sub
-
-    try {
-        const response = await fetchWithFallback(urlPath);
-        const html = await response.text();
-        const $ = cheerio.load(html);
-        const results = [];
-
-        $('div.last_episodes ul.items li').each((i, element) => {
-            const $el = $(element);
-            const title = $el.find('p.name a').attr('title');
-            const animeId = $el.find('p.name a').attr('href').split('/')[2];
-            const episodeNum = $el.find('p.episode').text().trim().replace('Episode ', '');
-            const imgUrl = $el.find('div.img a img').attr('src');
-            const episodeUrl = $el.find('p.name a').attr('href');
-
-            if (title && animeId && episodeNum && imgUrl) {
-                results.push({
-                    id: animeId,
-                    title: title,
-                    image: imgUrl,
-                    episodeId: episodeUrl.split('/')[1],
-                    episodeNumber: parseInt(episodeNum),
-                    url: `${BaseURL}${episodeUrl}`,
-                });
-            }
-        });
-
-        if (results.length === 0 && page === 1) {
-             // If we connected but found no elements, the HTML structure might have changed.
-             throw new Error("No recent anime found. Scraper likely broken due to HTML change.");
-        }
-
-        return { results };
-
-    } catch (error) {
-        console.error("getRecentAnime error:", error.message);
-        await SaveError(`Gogoanime Recent Error: ${error.message}`, `${BaseURL}${urlPath}`).catch(() => {});
-        throw new Error(`Failed To Load Recent Animes Page: ${page}. Scraper failed. Check GogoAnime HTML structure.`);
-    }
-}
-
-async function getSearch(query, page = 1) {
-    const path = `/search.html?keyword=${encodeURIComponent(query)}&page=${page}`;
-
-    try {
-        const response = await fetchWithFallback(path);
-        const html = await response.text();
-        const $ = cheerio.load(html);
-        const results = [];
-
-        $('div.last_episodes ul.items li').each((i, element) => {
-            const $el = $(element);
-            const title = $el.find('p.name a').attr('title');
-            const animeId = $el.find('p.name a').attr('href').split('/category/')[1];
-            const imgUrl = $el.find('div.img a img').attr('src');
-            const released = $el.find('p.released').text().trim().replace('Released: ', '');
-
-            if (title && animeId && imgUrl) {
-                results.push({
-                    id: animeId,
-                    title: title,
-                    image: imgUrl,
-                    released: released,
-                    url: `${BaseURL}/category/${animeId}`,
-                });
-            }
-        });
-
-        if (results.length === 0 && page === 1) {
-            throw new Error("No results found");
-        }
-
-        return { results };
-
-    } catch (error) {
-        console.error("getSearch error:", error.message);
-        await SaveError(`Gogoanime Search Error: ${error.message}`, `${BaseURL}${path}`).catch(() => {});
-        throw new Error(`Failed To Load Search Results for '${query}'. Scraper failed. Check GogoAnime HTML structure.`);
-    }
-}
-
-
-// Basic placeholder functions required for the API endpoints in index.js to work
-async function getAnime(id) {
-    const path = `/category/${id}`;
-    try {
-        const response = await fetchWithFallback(path);
-        const html = await response.text();
-        const $ = cheerio.load(html);
-        
-        const title = $('div.anime_info_body_bg h1').text() || id;
-        
-        return {
-            id: id,
-            title: title,
-            description: "Detailed description fetching not yet implemented in getAnime().",
-            episodes: [], 
-            status: $('div.anime_info_body_bg p:contains("Status:") a').text() || 'Unknown',
-            image: $('div.anime_info_body_bg img').attr('src'),
-            url: `${BaseURL}${path}`,
-        };
-    } catch (error) {
-        console.error("getAnime error:", error.message);
-        await SaveError(`Gogoanime Detail Error: ${error.message}`, `${BaseURL}${path}`).catch(() => {});
-        throw new Error(`Failed to load anime details for ID: ${id}`);
-    }
-}
-
-async function getPopularAnime(page = 1) {
-    // Placeholder - requires scraping the popular section (usually a sidebar or dedicated page)
-    console.warn("getPopularAnime is a placeholder and needs implementation.");
-    return { results: [] };
-}
-
-async function getEpisode(id) {
-    // Placeholder - requires scraping the embed player link
-    console.warn("getEpisode is a placeholder and needs implementation.");
-    return {
-        sources: [
-            { quality: "default", url: "https://your-video-host.com/video.mp4" }
-        ],
-        download: {}
-    };
-}
-
-
-// Export all required functions
-export {
-    getSearch,
-    getAnime,
-    getRecentAnime,
-    getPopularAnime,
-    getEpisode,
-    GogoDLScrapper,
-    getGogoAuthKey,
-    fetchWithFallback 
-};
 
 /**
- * Gets episode download links.
- * NOTE: Using atob fallback for environment compatibility.
+ * Scrapes the home page for trending and recently added anime.
+ * @returns {Promise<object>} The homepage data
  */
-async function GogoDLScrapper(animeid, cookie) {
+async function getHome() {
     try {
-        let decodedCookie = cookie;
-        if (!cookie) {
-            const encodedCookie = await getGogoAuthKey();
-            // Assuming the encoded cookie is Base64 and needs decoding
-            try {
-                // Use Buffer.from for Node.js environments (like Render)
-                decodedCookie = Buffer.from(encodedCookie, 'base64').toString('utf8');
-            } catch (e) {
-                // Fallback for non-Node environments (unlikely on Render, but safe)
-                decodedCookie = atob(encodedCookie);
+        const response = await fetchWithFallback("/?page=1");
+        const html = await response.text();
+        const body = cheerio.load(html);
+        
+        const recent = [];
+        body("div.last_episodes ul.items li").each((i, el) => {
+            const $el = body(el);
+            recent.push({
+                id: $el.find("p.name a").attr("href").replace("/", ""),
+                title: $el.find("p.name a").attr("title"),
+                image: $el.find("div.img a img").attr("src"),
+                release: $el.find("p.released").text().trim(),
+                episode: parseInt($el.find("p.episode").text().trim().replace("Episode ", "")),
+            });
+        });
+
+        const trending = [];
+        body("div.clr.wk-ep-list ul.items li").each((i, el) => {
+            const $el = body(el);
+            trending.push({
+                id: $el.find("p.name a").attr("href").replace("/", ""),
+                title: $el.find("p.name a").attr("title"),
+                image: $el.find("div.img a img").attr("src"),
+                release: $el.find("p.released").text().trim(),
+            });
+        });
+
+        return { recent, trending };
+
+    } catch (e) {
+        console.error("getHome error:", e.message);
+        throw new Error("Failed to load GogoAnime homepage data.");
+    }
+}
+
+
+/**
+ * Scrapes the search results for a given query and page.
+ * @param {string} query The search query
+ * @param {number} page The page number (default 1)
+ * @returns {Promise<object>} Search results
+ */
+async function getSearch(query, page = 1) {
+    try {
+        const response = await fetchWithFallback(
+            `/search.html?keyword=${query}&page=${page}`
+        );
+        const html = await response.text();
+        const body = cheerio.load(html);
+
+        const data = [];
+        body("div.last_episodes ul.items li").each((i, el) => {
+            const $el = body(el);
+            data.push({
+                id: $el.find("p.name a").attr("href").replace("/category/", ""),
+                title: $el.find("p.name a").attr("title"),
+                image: $el.find("div.img a img").attr("src"),
+                release: $el.find("p.released").text().trim(),
+            });
+        });
+
+        return { results: data };
+    } catch (e) {
+        console.error("getSearch error:", e.message);
+        throw new Error(`Failed to fetch GogoAnime search results for: ${query}`);
+    }
+}
+
+/**
+ * Scrapes the anime detail page.
+ * @param {string} animeId The anime ID (slug)
+ * @returns {Promise<object>} Anime details and episode list
+ */
+async function getAnime(animeId) {
+    try {
+        const response = await fetchWithFallback(`/category/${animeId}`);
+        const html = await response.text();
+        const body = cheerio.load(html);
+
+        const detailEl = body("div.anime_info_body_bg");
+
+        const details = {
+            id: animeId,
+            title: detailEl.find("h1").text().trim(),
+            image: detailEl.find("img").attr("src"),
+            synopsis: body("div.anime_info_body_bg p.type:nth-child(5)").text().replace("Plot Summary: ", "").trim(),
+            genres: body("div.anime_info_body_bg p.type:nth-child(6) a").map((i, el) => body(el).attr("title")).get(),
+            release: body("div.anime_info_body_bg p.type:nth-child(7)").text().replace("Released: ", "").trim(),
+            status: body("div.anime_info_body_bg p.type:nth-child(8) a").text().trim(),
+            otherName: body("div.anime_info_body_bg p.type:nth-child(9)").text().replace("Other name: ", "").trim(),
+        };
+
+        const epStart = body("#episode_page a").first().attr("ep_start");
+        const epEnd = body("#episode_page a").last().attr("ep_end");
+        const movieId = body("#movie_id").attr("value");
+        const alias = body("#alias_anime").attr("value");
+
+        const episodes = await getEpisodeList(epStart, epEnd, movieId, alias);
+
+        return { details, episodes };
+    } catch (e) {
+        console.error("getAnime error:", e.message);
+        throw new Error(`Failed to fetch GogoAnime details for: ${animeId}`);
+    }
+}
+
+
+/**
+ * Fetches the full list of episodes for an anime using AJAX.
+ * @param {string} epStart Starting episode number
+ * @param {string} epEnd Ending episode number
+ * @param {string} movieId The anime's unique ID used for episode fetching
+ * @param {string} alias The anime's alias/slug
+ * @returns {Promise<Array<object>>} List of episodes
+ */
+async function getEpisodeList(epStart, epEnd, movieId, alias) {
+    try {
+        const fetchUrl = `${BaseURL}/ajax/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${movieId}&alias=${alias}`;
+        const response = await fetch(fetchUrl);
+        const html = await response.text();
+        const body = cheerio.load(html);
+
+        const episodes = [];
+        body("li").each((i, el) => {
+            const $el = body(el);
+            episodes.push({
+                id: $el.find("a").attr("href").split("/")[1],
+                episode: $el.find("a div.name").text().replace("EP ", ""),
+                title: $el.find("a div.name").text(),
+                type: $el.find("a div.cate").text().trim(),
+            });
+        });
+        // Reverse order to get episode 1 first
+        return episodes.reverse(); 
+
+    } catch (e) {
+        console.error("getEpisodeList error:", e.message);
+        // Do not re-throw, just return an empty array if episode list fails to load
+        return [];
+    }
+}
+
+
+/**
+ * Scrapes the episode page for streaming links.
+ * @param {string} episodeId The full episode ID (slug)
+ * @returns {Promise<object>} Streaming links (vidcloud, etc.)
+ */
+async function getEpisode(episodeId) {
+    try {
+        const response = await fetchWithFallback(`/${episodeId}`);
+        const html = await response.text();
+        const body = cheerio.load(html);
+
+        const videoLinks = [];
+
+        // Scrape the main streaming server links
+        body("div.x-server-list ul li").each((i, el) => {
+            const $el = body(el);
+            const serverName = $el.find("a").text().trim();
+            const serverId = $el.attr("data-value");
+            const iframeUrl = $el.find("a").attr("data-video");
+
+            if (serverId && iframeUrl) {
+                videoLinks.push({
+                    name: serverName,
+                    server: serverId,
+                    url: iframeUrl,
+                });
             }
-        } else {
-            decodedCookie = atob(cookie); // Assuming the passed cookie is also encoded
+        });
+
+        // The main server is usually the first one (GoGo server)
+        const gogoIframeUrl = videoLinks.find(link => link.server === 'gogocdn')?.url || videoLinks[0]?.url;
+
+        if (!gogoIframeUrl) {
+            throw new Error("No video iframe found for this episode.");
         }
+        
+        // Extract the embedded video details from the iframe
+        const gogoUrl = new URL(gogoIframeUrl);
+        const gogoResponse = await fetch(gogoUrl.toString());
+        const gogoHtml = await gogoResponse.text();
+        const gogoBody = cheerio.load(gogoHtml);
+
+        const embeddedVideoId = gogoUrl.searchParams.get("id");
+        if (!embeddedVideoId) {
+            throw new Error("Could not find embedded video ID.");
+        }
+
+        const params = await generateEncryptAjaxParameters(gogoBody, embeddedVideoId);
+        const encryptedAjaxUrl = `${gogoUrl.origin}/encrypt-ajax.php?${params}`;
+
+        const encryptedResponse = await fetch(encryptedAjaxUrl, {
+            headers: {
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        });
+        
+        const encryptedJson = await encryptedResponse.json();
+        const decryptedLinks = decryptEncryptAjaxResponse(encryptedJson);
+
+        const sourceLinks = decryptedLinks.map(link => ({
+            quality: link.label.replace(" ", "-"),
+            url: link.file,
+        }));
+
+        return { videoLinks, streaming: sourceLinks };
+
+    } catch (e) {
+        console.error("getEpisode error:", e.message);
+        throw new Error(`Failed to fetch streaming links for: ${episodeId}. Details: ${e.message}`);
+    }
+}
+
+/**
+ * Scrapes the recent anime list.
+ * @param {number} page The page number (default 1)
+ * @returns {Promise<object>} Recent anime results
+ */
+async function getRecentAnime(page = 1) {
+    try {
+        const response = await fetchWithFallback(`/top-airing.html?page=${page}`);
+        const html = await response.text();
+        const body = cheerio.load(html);
+
+        const data = [];
+        body("div.added_series_body.popular ul.listing li").each((i, el) => {
+            const $el = body(el);
+            data.push({
+                id: $el.find("a").attr("href").replace("/category/", ""),
+                title: $el.find("a").text().trim(),
+                image: $el.find("img").attr("src"),
+                genre: $el.find("p.genre a").text().trim(),
+                release: $el.find("p.released").text().trim().replace("Released: ", ""),
+            });
+        });
+
+        return { results: data };
+
+    } catch (e) {
+        console.error("getRecentAnime error:", e.message);
+        throw new Error("Failed to fetch recent GogoAnime data.");
+    }
+}
+
+
+/**
+ * Scrapes the popular anime list.
+ * @param {number} page The page number (default 1)
+ * @returns {Promise<object>} Popular anime results
+ */
+async function getPopularAnime(page = 1) {
+    try {
+        const response = await fetchWithFallback(`/popular.html?page=${page}`);
+        const html = await response.text();
+        const body = cheerio.load(html);
+
+        const data = [];
+        body("div.added_series_body.popular ul.listing li").each((i, el) => {
+            const $el = body(el);
+            data.push({
+                id: $el.find("a").attr("href").replace("/category/", ""),
+                title: $el.find("a").text().trim(),
+                image: $el.find("img").attr("src"),
+                genre: $el.find("p.genre a").text().trim(),
+                release: $el.find("p.released").text().trim().replace("Released: ", ""),
+            });
+        });
+
+        return { results: data };
+
+    } catch (e) {
+        console.error("getPopularAnime error:", e.message);
+        throw new Error("Failed to fetch popular GogoAnime data.");
+    }
+}
+
+
+/**
+ * Scrapes download links from the download page (requires auth cookie).
+ * NOTE: This function's reliability depends entirely on the 'auth' cookie being valid.
+ * @param {string} animeid The full episode ID (e.g., 'anime-name-episode-1')
+ * @returns {Promise<object>} Download links by quality
+ */
+async function GogoDLScrapper(animeid) {
+    try {
+        const cookieBase64 = await getGogoAuthKey();
+        if (!cookieBase64) {
+            throw new Error("Gogo download auth key is unavailable.");
+        }
+        
+        // Decode the Base64-encoded cookie string
+        const cookie = atob(cookieBase64); 
 
         const response = await fetchWithFallback("/" + animeid, {
             headers: {
-                Cookie: `auth=${decodedCookie}`
-            }
+                Cookie: `auth=${cookie}`,
+            },
         });
-
+        
         const html = await response.text();
         const body = cheerio.load(html);
         let data = {};
-        const links = body("div.cf-download").find("a");
+        
+        // Check for download section visibility
+        const downloadSection = body("div.cf-download");
+        if (downloadSection.length === 0) {
+            console.warn(`GogoDLScrapper: Download section not found for ${animeid}. Check auth cookie validity.`);
+            return {};
+        }
 
+        const links = downloadSection.find("a");
+        
         links.each((i, link) => {
             const a = body(link);
             const quality = a.text().trim();
@@ -237,32 +386,48 @@ async function GogoDLScrapper(animeid, cookie) {
                 data[quality] = url.trim();
             }
         });
-
+        
         return data;
     } catch (e) {
         console.error("GogoDLScrapper error:", e.message);
-        await SaveError(`GogoDLScrapper Error: ${e.message}`, "/download/" + animeid).catch(() => {});
-        return {};
+        // Returning an empty object if scraping fails due to auth or structure changes
+        return {}; 
     }
 }
 
+/**
+ * Fetches the base64-encoded GogoAnime auth cookie from a GitHub repository.
+ * @returns {Promise<string>} The base64-encoded cookie string
+ */
 async function getGogoAuthKey() {
     try {
-        // Fetching auth key from a GitHub content endpoint
+        // Fetching the base64-encoded cookie from a public Gist/File
         const response = await fetch(
-            "https://api.github.com/repos/TechShreyash/TechShreyash/contents/gogoCookie.txt", {
+            "https://api.github.com/repos/TechShreyash/TechShreyash/contents/gogoCookie.txt",
+            {
                 headers: {
                     "User-Agent": USER_AGENT,
                 },
             }
         );
         const data = await response.json();
-        // GitHub content is Base64 encoded, need to decode it
-        const base64Content = data["content"].replaceAll("\n", "");
-        return base64Content; // Return the base64 string
+        // The content field is base64-encoded by GitHub for file contents
+        const cookie = data["content"].replaceAll("\n", "");
+        return cookie;
     } catch (error) {
         console.error("getGogoAuthKey error:", error.message);
-        await SaveError(`GogoAuthKey Fetch Error: ${error.message}`).catch(() => {});
-        return null;
+        return ""; // Return empty string on failure
     }
 }
+
+
+export {
+    getSearch,
+    getAnime,
+    getRecentAnime,
+    getPopularAnime,
+    getEpisode,
+    GogoDLScrapper,
+    getGogoAuthKey,
+    getHome,
+};
