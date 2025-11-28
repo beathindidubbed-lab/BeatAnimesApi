@@ -2,7 +2,8 @@ import {
     generateEncryptAjaxParameters,
     decryptEncryptAjaxResponse,
 } from "./gogo_extractor.js";
-import cheerio from "cheerio";
+// FIX: Changed default import to named import 'load' to fix the constructor error
+import { load } from "cheerio"; 
 
 // UPDATED: Try multiple working GogoAnime domains for improved reliability
 const GOGO_DOMAINS = [
@@ -66,7 +67,7 @@ async function getHome() {
     try {
         const response = await fetchWithFallback("/?page=1");
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
         
         const recent = [];
         body("div.last_episodes ul.items li").each((i, el) => {
@@ -112,7 +113,7 @@ async function getSearch(query, page = 1) {
             `/search.html?keyword=${query}&page=${page}`
         );
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
 
         const data = [];
         body("div.last_episodes ul.items li").each((i, el) => {
@@ -128,7 +129,7 @@ async function getSearch(query, page = 1) {
         return { results: data };
     } catch (e) {
         console.error("getSearch error:", e.message);
-        throw new Error(`Failed to fetch GogoAnime search results for: ${query}`);
+        throw new Error(`Failed to fetch GogoAnime search results for: ${query}. Scraper failed. Check GogoAnime HTML structure.`);
     }
 }
 
@@ -141,7 +142,7 @@ async function getAnime(animeId) {
     try {
         const response = await fetchWithFallback(`/category/${animeId}`);
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
 
         const detailEl = body("div.anime_info_body_bg");
 
@@ -184,7 +185,7 @@ async function getEpisodeList(epStart, epEnd, movieId, alias) {
         const fetchUrl = `${BaseURL}/ajax/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${movieId}&alias=${alias}`;
         const response = await fetch(fetchUrl);
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
 
         const episodes = [];
         body("li").each((i, el) => {
@@ -216,7 +217,7 @@ async function getEpisode(episodeId) {
     try {
         const response = await fetchWithFallback(`/${episodeId}`);
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
 
         const videoLinks = [];
 
@@ -247,7 +248,7 @@ async function getEpisode(episodeId) {
         const gogoUrl = new URL(gogoIframeUrl);
         const gogoResponse = await fetch(gogoUrl.toString());
         const gogoHtml = await gogoResponse.text();
-        const gogoBody = cheerio.load(gogoHtml);
+        const gogoBody = load(gogoHtml); // Using the imported 'load' function
 
         const embeddedVideoId = gogoUrl.searchParams.get("id");
         if (!embeddedVideoId) {
@@ -288,7 +289,7 @@ async function getRecentAnime(page = 1) {
     try {
         const response = await fetchWithFallback(`/top-airing.html?page=${page}`);
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
 
         const data = [];
         body("div.added_series_body.popular ul.listing li").each((i, el) => {
@@ -320,7 +321,7 @@ async function getPopularAnime(page = 1) {
     try {
         const response = await fetchWithFallback(`/popular.html?page=${page}`);
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
 
         const data = [];
         body("div.added_series_body.popular ul.listing li").each((i, el) => {
@@ -366,7 +367,7 @@ async function GogoDLScrapper(animeid) {
         });
         
         const html = await response.text();
-        const body = cheerio.load(html);
+        const body = load(html); // Using the imported 'load' function
         let data = {};
         
         // Check for download section visibility
