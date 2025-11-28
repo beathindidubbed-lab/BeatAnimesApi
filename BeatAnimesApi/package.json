@@ -1,16 +1,21 @@
 {
     "name": "beatanimes-api",
-    "version": "0.0.0",
-    "devDependencies": {
-        "wrangler": "^3.30.1"
-    },
-    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "description": "Beat Animes API - Anime streaming data API",
+    "main": "src/index.js",
     "scripts": {
-        "start": "wrangler dev",
-        "deploy": "wrangler deploy"
+        "start": "node src/index.js",
+        "dev": "node src/index.js"
+    },
+    "engines": {
+        "node": ">=18.0.0"
     },
     "dependencies": {
         "cheerio": "^1.0.0-rc.12",
         "crypto-js": "^4.2.0"
-    }
+    },
+    "keywords": ["anime", "api", "streaming", "gogoanime", "anilist"],
+    "author": "Beat Animes",
+    "license": "MIT"
 }
