@@ -3,15 +3,14 @@ import {
     decryptEncryptAjaxResponse,
 } from "./gogo_extractor.js";
 import cheerio from "cheerio";
-import { SaveError } from "./errorHandler.js"; // **CRITICAL: Ensure SaveError is imported**
+import { SaveError } from "./errorHandler.js"; 
 
-// UPDATED DOMAINS: Using the currently most reliable domain. Scraper sites change often.
+// UPDATED DOMAINS: Prioritizing the new domain provided by the user.
 const GOGO_DOMAINS = [
-    "https://gogoanimehd.io", // Currently reliable primary
-   
+    "https://www.gogoanimes.watch", // **NEW Primary Domain**
 ];
 
-let BaseURL = GOGO_DOMAINS[0]; // Start with first domain
+let BaseURL = GOGO_DOMAINS[0]; // Start with the new working domain
 
 const USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -20,7 +19,7 @@ const USER_AGENT =
  * Function to try multiple domains if one fails, with clearer URL construction.
  */
 async function fetchWithFallback(path, options = {}) {
-    let lastError = new Error("Unknown connection error."); // Default error object
+    let lastError = new new Error("Unknown connection error."); // Default error object
 
     for (const domain of GOGO_DOMAINS) {
         // Explicitly ensure correct URL construction
@@ -52,7 +51,8 @@ async function fetchWithFallback(path, options = {}) {
     
     // Log the final failure and rethrow
     console.error("All GogoAnime domains failed. Last error:", lastError.message);
-    throw new Error(`Failed to connect to GogoAnime source after all retries. Last failed URL: ${BaseURL}${path}`);
+    // Use the first domain as the last failed URL since BaseURL might not be set correctly if all fail
+    throw new Error(`Failed to connect to GogoAnime source after all retries. Last failed URL: ${GOGO_DOMAINS[0]}${path}`);
 }
 
 
@@ -87,7 +87,8 @@ async function getRecentAnime(page = 1) {
         });
 
         if (results.length === 0 && page === 1) {
-             throw new Error("No recent anime found. Scraper likely broken.");
+             // If we connected but found no elements, the HTML structure might have changed.
+             throw new Error("No recent anime found. Scraper likely broken due to HTML change.");
         }
 
         return { results };
