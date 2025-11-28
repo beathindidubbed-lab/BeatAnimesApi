@@ -1,6 +1,6 @@
 async function SaveError(err, requestUrl = '') {
     // Log errors to console only
-    // External error logging service from original AnimeDex is no longer available
+   
     const timestamp = new Date().toISOString();
     const errorMessage = `[${timestamp}] Beat AnimesApi Error: ${err} | URL: ${requestUrl}`;
     
@@ -11,3 +11,4 @@ async function SaveError(err, requestUrl = '') {
 }
 
 export { SaveError };
+
