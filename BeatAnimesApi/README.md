@@ -1,10 +1,4 @@
-## ⚠️ **Note: This Project Is Stopped**
 
-The **Beat AnimesLite Project** has been discontinued. I have made this decision to avoid potential copyright claims in the future. As a result, all public domains and APIs hosted by me are now inactive.
-
-The code for the website and API will remain accessible for anyone who wishes to experiment with it or make modifications. However, please be aware that there will be no further updates or releases from my side.
-
-Thank you for your understanding and support during the project's active phase! 🙌🌟
 
 ### Project Links :
 
@@ -63,5 +57,6 @@ wrangler deploy
 Stay informed about the latest updates by joining our channels / groups :
 
 [![Telegram Channel](https://img.shields.io/static/v1?label=Join&message=Telegram%20Channel&color=blueviolet&style=for-the-badge&logo=telegram&logoColor=violet)](https://telegram.me/BeatAnime) [![Telegram Group](https://img.shields.io/static/v1?label=Join&message=Telegram%20Group&color=blueviolet&style=for-the-badge&logo=telegram&logoColor=violet)](https://t.me/Beat_Anime_Discussion)
+
 
 
