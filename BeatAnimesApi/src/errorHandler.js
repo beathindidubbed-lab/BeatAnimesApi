@@ -1,16 +1,13 @@
 async function SaveError(err, requestUrl = '') {
-    try {
-        const url = 'https://worker-curly-math-37b8.techzbots1.workers.dev/rM8kBk5lzLropzqxZsaxc3L5ndgDzJ21t7lLreY5yG7sGRj2TH';
-        const errorMessage = `from Beat AnimesApi: ${err} | URL: ${requestUrl}`;
-        
-        await fetch(url, { 
-            headers: { text: errorMessage },
-            method: 'GET'
-        });
-    } catch (e) {
-        // Silently fail - don't crash the API if error logging fails
-        console.log('Failed to log error to external service:', e.message);
-    }
+    // Log errors to console only
+    // External error logging service from original AnimeDex is no longer available
+    const timestamp = new Date().toISOString();
+    const errorMessage = `[${timestamp}] Beat AnimesApi Error: ${err} | URL: ${requestUrl}`;
+    
+    console.error(errorMessage);
+    
+    // You can add your own error logging service here if needed
+    // For example: send to your own Discord webhook, Telegram bot, or logging service
 }
 
 export { SaveError };
