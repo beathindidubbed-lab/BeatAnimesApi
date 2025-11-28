@@ -3,13 +3,12 @@ import {
     decryptEncryptAjaxResponse,
 } from "./gogo_extractor.js";
 import cheerio from "cheerio";
-import { SaveError } from "./errorHandler.js"; // Import SaveError
+import { SaveError } from "./errorHandler.js"; // **CRITICAL: Ensure SaveError is imported**
 
-// UPDATED: Try multiple working GogoAnime domains
+// UPDATED DOMAINS: Using the currently most reliable domain. Scraper sites change often.
 const GOGO_DOMAINS = [
-    "https://anitaku.pe", // Current working domain
-    "https://gogoanime3.co", // Backup
-    "https://gogoanime.hu", // Backup
+    "https://gogoanimehd.io", // Currently reliable primary
+   
 ];
 
 let BaseURL = GOGO_DOMAINS[0]; // Start with first domain
@@ -17,13 +16,17 @@ let BaseURL = GOGO_DOMAINS[0]; // Start with first domain
 const USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// Function to try multiple domains if one fails
+/**
+ * Function to try multiple domains if one fails, with clearer URL construction.
+ */
 async function fetchWithFallback(path, options = {}) {
-    let lastError;
+    let lastError = new Error("Unknown connection error."); // Default error object
 
     for (const domain of GOGO_DOMAINS) {
+        // Explicitly ensure correct URL construction
+        const url = `${domain}${path}`; 
         try {
-            const url = domain + path;
+            console.log(`Attempting to fetch from: ${url}`); // Log the attempted URL for debugging
             const response = await fetch(url, {
                 ...options,
                 headers: {
@@ -34,24 +37,31 @@ async function fetchWithFallback(path, options = {}) {
 
             if (response.ok) {
                 BaseURL = domain; // Update to working domain
+                console.log(`Successfully connected to ${domain}`);
                 return response;
             }
+            
+            // If response is not ok, throw to trigger fallback/retry logic
+            throw new Error(`HTTP Status ${response.status} from ${domain}`);
+
         } catch (error) {
             lastError = error;
             console.warn(`Attempt failed for ${domain}: ${error.message}`);
         }
     }
-    console.error("All GogoAnime domains failed. Last error:", lastError);
-    throw new Error("Failed to connect to GogoAnime source after all retries.");
+    
+    // Log the final failure and rethrow
+    console.error("All GogoAnime domains failed. Last error:", lastError.message);
+    throw new Error(`Failed to connect to GogoAnime source after all retries. Last failed URL: ${BaseURL}${path}`);
 }
 
 
 async function getRecentAnime(page = 1) {
     // Gogoanime uses an AJAX endpoint for recent releases
-    const url = `${BaseURL}/ajax/page-recent-release.html?page=${page}&type=1`; // type=1 for Sub
+    const urlPath = `/ajax/page-recent-release.html?page=${page}&type=1`; // type=1 for Sub
 
     try {
-        const response = await fetchWithFallback(url);
+        const response = await fetchWithFallback(urlPath);
         const html = await response.text();
         const $ = cheerio.load(html);
         const results = [];
@@ -76,16 +86,15 @@ async function getRecentAnime(page = 1) {
             }
         });
 
-        if (results.length === 0) {
-             // Do not throw if it's just the end of pages, but if page 1 fails, something is wrong
-             if (page == 1) throw new Error("No recent anime found");
+        if (results.length === 0 && page === 1) {
+             throw new Error("No recent anime found. Scraper likely broken.");
         }
 
         return { results };
 
     } catch (error) {
         console.error("getRecentAnime error:", error.message);
-        await SaveError(`Gogoanime Recent Error: ${error.message}`, url).catch(() => {});
+        await SaveError(`Gogoanime Recent Error: ${error.message}`, `${BaseURL}${urlPath}`).catch(() => {});
         throw new Error(`Failed To Load Recent Animes Page: ${page}. Scraper failed. Check GogoAnime HTML structure.`);
     }
 }
@@ -125,7 +134,7 @@ async function getSearch(query, page = 1) {
 
     } catch (error) {
         console.error("getSearch error:", error.message);
-        await SaveError(`Gogoanime Search Error: ${error.message}`, path).catch(() => {});
+        await SaveError(`Gogoanime Search Error: ${error.message}`, `${BaseURL}${path}`).catch(() => {});
         throw new Error(`Failed To Load Search Results for '${query}'. Scraper failed. Check GogoAnime HTML structure.`);
     }
 }
@@ -133,28 +142,26 @@ async function getSearch(query, page = 1) {
 
 // Basic placeholder functions required for the API endpoints in index.js to work
 async function getAnime(id) {
-    // This is a placeholder. You need to implement the detailed page scraping here.
     const path = `/category/${id}`;
     try {
         const response = await fetchWithFallback(path);
         const html = await response.text();
         const $ = cheerio.load(html);
         
-        // Example structure for a placeholder response
         const title = $('div.anime_info_body_bg h1').text() || id;
         
         return {
             id: id,
             title: title,
             description: "Detailed description fetching not yet implemented in getAnime().",
-            episodes: [], // Need to scrape episode list here
+            episodes: [], 
             status: $('div.anime_info_body_bg p:contains("Status:") a').text() || 'Unknown',
             image: $('div.anime_info_body_bg img').attr('src'),
             url: `${BaseURL}${path}`,
         };
     } catch (error) {
         console.error("getAnime error:", error.message);
-        await SaveError(`Gogoanime Detail Error: ${error.message}`, path).catch(() => {});
+        await SaveError(`Gogoanime Detail Error: ${error.message}`, `${BaseURL}${path}`).catch(() => {});
         throw new Error(`Failed to load anime details for ID: ${id}`);
     }
 }
@@ -186,23 +193,33 @@ export {
     getEpisode,
     GogoDLScrapper,
     getGogoAuthKey,
-    fetchWithFallback // Useful for external testing
+    fetchWithFallback 
 };
 
-// Existing functions from the original snippet (GogoDLScrapper, getGogoAuthKey) were kept as they are.
-
+/**
+ * Gets episode download links.
+ * NOTE: Using atob fallback for environment compatibility.
+ */
 async function GogoDLScrapper(animeid, cookie) {
-    // ... (Existing implementation)
     try {
+        let decodedCookie = cookie;
         if (!cookie) {
-            cookie = await getGogoAuthKey();
-            cookie = Buffer.from(cookie, 'base64').toString('utf8');
+            const encodedCookie = await getGogoAuthKey();
+            // Assuming the encoded cookie is Base64 and needs decoding
+            try {
+                // Use Buffer.from for Node.js environments (like Render)
+                decodedCookie = Buffer.from(encodedCookie, 'base64').toString('utf8');
+            } catch (e) {
+                // Fallback for non-Node environments (unlikely on Render, but safe)
+                decodedCookie = atob(encodedCookie);
+            }
         } else {
-            cookie = atob(cookie);
+            decodedCookie = atob(cookie); // Assuming the passed cookie is also encoded
         }
+
         const response = await fetchWithFallback("/" + animeid, {
             headers: {
-                Cookie: `auth=${cookie}`
+                Cookie: `auth=${decodedCookie}`
             }
         });
 
@@ -230,6 +247,7 @@ async function GogoDLScrapper(animeid, cookie) {
 
 async function getGogoAuthKey() {
     try {
+        // Fetching auth key from a GitHub content endpoint
         const response = await fetch(
             "https://api.github.com/repos/TechShreyash/TechShreyash/contents/gogoCookie.txt", {
                 headers: {
@@ -238,13 +256,12 @@ async function getGogoAuthKey() {
             }
         );
         const data = await response.json();
-        const cookie = data["content"].replaceAll("\n", "");
-        return cookie;
+        // GitHub content is Base64 encoded, need to decode it
+        const base64Content = data["content"].replaceAll("\n", "");
+        return base64Content; // Return the base64 string
     } catch (error) {
         console.error("getGogoAuthKey error:", error.message);
         await SaveError(`GogoAuthKey Fetch Error: ${error.message}`).catch(() => {});
         return null;
     }
 }
-
-// Exports adjusted at the top for clarity.
