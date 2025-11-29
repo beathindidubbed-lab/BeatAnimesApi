@@ -7,7 +7,7 @@ import cheerio from "cheerio";
 // UPDATED: Try multiple working GogoAnime domains
 // Note: These domains are constantly changing. If the API fails, update this list.
 const GOGO_DOMAINS = [
-    "https://anitaku.pe",      // 1. Primary (often used)
+    "https://anitaku.to",      // 1. Primary (often used)
     "https://anitaku.so",      // 2. Backup/Alternative
     "https://gogoanime.hu",    // 3. Backup
     "https://gogoanime3.co",   // 4. Backup
@@ -382,3 +382,4 @@ export {
     GogoDLScrapper,
     getGogoAuthKey,
 };
+
