@@ -3,13 +3,24 @@ const CACHE = {}
 
 async function increaseViews(headers) {
     try {
-        // Step 1: Get the referer, checking both cases as a precaution, though 'get' should be case-insensitive.
-        // We ensure it's a string, and if null/undefined, treat it as 'null'.
-        let referer = String(headers.get("Referer") || headers.get("referer") || 'null');
+        // --- START: Enhanced Header Extraction ---
+        let referer = null;
+
+        // 1. Try case-insensitive .get() first (standard Fetch API / Worker environment)
+        if (typeof headers.get === 'function') {
+            referer = headers.get("Referer") || headers.get("referer");
+        } else if (typeof headers === 'object' && headers !== null) {
+            // 2. Fallback for raw Node.js 'req.headers' object (keys are lowercase)
+            referer = headers['referer'];
+        }
+        
+        // Ensure referer is treated as a string, defaulting to 'null' if still empty/undefined
+        referer = String(referer || 'null');
         
         if (referer === 'null' || referer === 'undefined') {
             referer = "direct";
         }
+        // --- END: Enhanced Header Extraction ---
         else {
             try {
                 // Step 2: Attempt to construct a URL object from the referer string
