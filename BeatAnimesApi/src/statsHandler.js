@@ -9,8 +9,7 @@ import cheerio from "cheerio";
 const GOGO_DOMAINS = [
     "https://anitaku.to",      // 1. Primary (often used)
     "https://anitaku.so",      // 2. Backup/Alternative
-    "https://gogoanime.hu",    // 3. Backup
-    "https://gogoanime3.co",   // 4. Backup
+   
 ];
 
 let BaseURL = GOGO_DOMAINS[0]; // Start with first domain
@@ -382,4 +381,5 @@ export {
     GogoDLScrapper,
     getGogoAuthKey,
 };
+
 
