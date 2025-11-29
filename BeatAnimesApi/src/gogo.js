@@ -34,10 +34,16 @@ async function fetchWithFallback(path, options = {}) {
             const url = domain + path;
             const response = await fetch(url, {
                 ...options,
+                // START: Enhanced Headers for Anti-Bot Bypass
                 headers: {
                     "User-Agent": USER_AGENT,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                    "Connection": "keep-alive",
+                    "Referer": domain + "/", // Adding a referer header to look like a browser transition
                     ...options.headers
                 }
+                // END: Enhanced Headers
             });
             
             // Check for OK response status (200-299)
