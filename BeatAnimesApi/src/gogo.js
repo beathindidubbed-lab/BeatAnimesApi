@@ -5,58 +5,90 @@ import {
 // FIX: Changed default import to named import 'load' to fix the constructor error
 import { load } from "cheerio"; 
 
-// UPDATED: Try multiple working GogoAnime domains for improved reliability
+// UPDATED: Removed anitaku.pe based on user feedback to improve reliability.
 const GOGO_DOMAINS = [
-    "https://anitaku.pe",      // Current primary working domain
+    "https://anitaku.to",      // Current primary working domain 
     "https://gogoanime3.co",   // Backup
     "https://gogoanime.hu",    // Backup
     "https://gogoanimehd.io",  // Additional Backup
 ];
 
-let BaseURL = GOGO_DOMAINS[0]; // Start with the first domain
+let BaseURL = GOGO_DOMAINS[0]; // Start with the new primary domain
 
 const USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /**
- * Tries multiple domains until a successful fetch is made.
+ * Utility function for creating a delay.
+ * @param {number} ms Milliseconds to wait
+ * @returns {Promise<void>}
+ */
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Tries multiple domains and uses exponential backoff for retries until a successful fetch is made.
  * If successful, it updates BaseURL to the working domain.
  * @param {string} path The path to fetch (e.g., "/category/anime-name")
  * @param {object} options Fetch options (headers, body, etc.)
  * @returns {Promise<Response>} The fetch response
- * @throws {Error} If all domains fail
+ * @throws {Error} If all domains and all retries fail
  */
 async function fetchWithFallback(path, options = {}) {
     let lastError;
+    const MAX_RETRIES = 2; // Maximum retries per domain (3 total attempts)
     
     for (const domain of GOGO_DOMAINS) {
-        try {
-            const url = domain + path;
-            const response = await fetch(url, {
-                ...options,
-                // START: Enhanced Headers for Anti-Bot Bypass
-                headers: {
-                    "User-Agent": USER_AGENT,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.5",
-                    "Connection": "keep-alive",
-                    "Referer": domain + "/", // Adding a referer header to look like a browser transition
-                    ...options.headers
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const url = domain + path;
+                
+                // --- Stricter Timeout Logic ---
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+                const response = await fetch(url, {
+                    ...options,
+                    signal: controller.signal, // Apply the timeout signal
+                    // START: Enhanced Headers for Anti-Bot Bypass
+                    headers: {
+                        "User-Agent": USER_AGENT,
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.5",
+                        "Connection": "keep-alive",
+                        "Referer": domain + "/", // Adding a referer header
+                        ...options.headers
+                    }
+                    // END: Enhanced Headers
+                });
+                
+                clearTimeout(timeout); // Clear the timeout if the request succeeds quickly
+
+                // Check for OK response status (200-299)
+                if (response.ok) {
+                    // Peek at the response content to check for the 'Redirecting...' block
+                    const htmlCheck = await response.clone().text(); 
+                    if (htmlCheck.includes("<title>Redirecting...</title>")) {
+                        throw new Error("Anti-Bot Page detected.");
+                    }
+
+                    BaseURL = domain; // Update to the currently working domain
+                    return response; // Success!
+                } else {
+                    // If status is not OK (e.g., 404, 500), throw an error to trigger retry/fallback
+                    throw new Error(`Non-OK status: ${response.status} from ${domain}`);
                 }
-                // END: Enhanced Headers
-            });
-            
-            // Check for OK response status (200-299)
-            if (response.ok) {
-                BaseURL = domain; // Update to the currently working domain
-                return response;
-            } else {
-                // If status is not OK (e.g., 404, 500, or cloudflare), throw an error to try the next domain
-                throw new Error(`Non-OK status: ${response.status} from ${domain}`);
+            } catch (error) {
+                lastError = error;
+                
+                if (attempt < MAX_RETRIES) {
+                    // Exponential Backoff: Delay 1s, 2s, 4s...
+                    const delay = Math.pow(2, attempt) * 1000; 
+                    console.warn(`[GOGO Retry] Domain ${domain} failed (Attempt ${attempt + 1}/${MAX_RETRIES}). Retrying in ${delay / 1000}s. Error: ${error.message}`);
+                    await wait(delay);
+                } else {
+                    console.warn(`[GOGO Fallback] Domain ${domain} failed after ${MAX_RETRIES + 1} attempts. Trying next domain. Last error: ${error.message}`);
+                }
             }
-        } catch (error) {
-            lastError = error;
-            console.warn(`[GOGO Fallback] Domain ${domain} failed. Trying next. Error: ${error.message}`);
         }
     }
 
