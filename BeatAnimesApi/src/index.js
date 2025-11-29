@@ -102,7 +102,7 @@ http.createServer(async (req, res) => {
                         anilistUpcoming: anilistUpcoming.status === 'fulfilled' && anilistUpcoming.value?.media 
                             ? anilistUpcoming.value.media 
                             : []
-              };
+             };
 
                     // Simplified response structure for frontend
                     const simplifiedData = {
@@ -127,7 +127,7 @@ http.createServer(async (req, res) => {
                         throw error;
                     }
                 }
-            }
+             }
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
             const page = parseInt(searchParams.get("page")) || 1;
@@ -409,5 +409,6 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
 
 
