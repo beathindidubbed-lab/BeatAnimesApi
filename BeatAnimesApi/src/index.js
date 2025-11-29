@@ -61,23 +61,42 @@ http.createServer(async (req, res) => {
                 status: "ok",
                 timestamp: new Date().toISOString(),
             });
-        } else if (path === "/home") {
-            if (HOME_CACHE.data && HOME_CACHE.expires > Date.now()) {
-                responseBody = JSON.stringify({ results: HOME_CACHE.data });
-            } else {
-                try {
-                    const [gogoHome, anilistTrending, anilistUpcoming] = await Promise.allSettled([
-                        getHome(),
-                        getAnilistTrending(1, 10),
-                        getAnilistUpcoming(1, 10)
-                    ]);
+        } else if (path.startsWith("/search/")) {
+              const query = url.pathname.replace("/search/", "").trim().split("?")[0];
+              const page = parseInt(url.searchParams.get("page")) || 1;
+              const cacheKey = `/search/${query}/${page}`;
 
-                    const data = {
-                        gogoRecent: gogoHome.status === 'fulfilled' ? gogoHome.value.recent : [],
-                        gogoPopular: gogoHome.status === 'fulfilled' ? gogoHome.value.trending : [],
-                        anilistTrending: anilistTrending.status === 'fulfilled' && anilistTrending.value?.media 
-                            ? anilistTrending.value.media 
-                            : [],
+              if (SEARCH_CACHE[cacheKey] && SEARCH_CACHE[cacheKey].expires > Date.now()) {
+                  responseBody = JSON.stringify(SEARCH_CACHE[cacheKey].data);
+                  return;
+              }
+
+    // Fetch data:
+              const data = await getSearch(query, page);
+              const searchResults = data.results || [];
+
+    // *** FIX: Check for no results and return 200 OK status with empty array ***
+              if (searchResults.length === 0) {
+                  statusCode = 200; // Force success status
+                  responseBody = JSON.stringify({ 
+                   results: { 
+                      results: [], 
+                      hasNextPage: false,
+                      message: `No results found for "${query}"` 
+                      } 
+                 });
+                 return; // Exit successfully, preventing the error catch block
+              } 
+    // *** END FIX ***
+
+    // If results found, proceed with caching and responding:
+              SEARCH_CACHE[cacheKey] = {
+                 data: { results: data },
+                 expires: Date.now() + 30 * 60 * 1000,
+              };
+              responseBody = JSON.stringify({ results: data });
+             }
+        
                         anilistUpcoming: anilistUpcoming.status === 'fulfilled' && anilistUpcoming.value?.media 
                             ? anilistUpcoming.value.media 
                             : []
@@ -388,3 +407,4 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
