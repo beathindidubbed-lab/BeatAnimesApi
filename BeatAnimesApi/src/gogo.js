@@ -110,47 +110,47 @@ async function getHome() {
 
         // In src/gogo.js, find and replace the getPopularAnime function:
 
-async function getPopularAnime(page = 1) {
-    try {
-        const response = await fetchWithFallback(`/popular.html?page=${page}`);
-        const html = await response.text();
-        const $ = load(html);
-        const data = [];
-        let hasNextPage = false;
+        async function getPopularAnime(page = 1) {
+            try {
+                const response = await fetchWithFallback(`/popular.html?page=${page}`);
+                const html = await response.text();
+                const $ = load(html);
+                const data = [];
+                let hasNextPage = false;
 
         // FIX: Updated selector for the popular list items
-        $('div.last_episodes > ul.items > li').each((i, el) => {
-            const $el = $(el);
-            const animeId = $el.find("a").attr("href").replace("/category/", "");
-            const image = $el.find(".img img").attr("src");
-            const title = $el.find(".name a").text();
-            const released = $el.find(".released").text().trim(); // Selector for release year
+               $('div.last_episodes > ul.items > li').each((i, el) => {
+                   const $el = $(el);
+                   const animeId = $el.find("a").attr("href").replace("/category/", "");
+                   const image = $el.find(".img img").attr("src");
+                   const title = $el.find(".name a").text();
+                   const released = $el.find(".released").text().trim(); // Selector for release year
 
-            if (animeId && title) {
-                data.push({
-                    id: animeId,
-                    title: title,
-                    image: image,
-                    releaseDate: released,
-                });
-            }
-        });
+                   if (animeId && title) {
+                       data.push({
+                          id: animeId,
+                          title: title,
+                          image: image,
+                          releaseDate: released,
+                      });
+                   }
+               });
 
         // Check for next page
-        const currentPage = parseInt($(".pagination .selected a").text()) || 1;
-        const lastPage = parseInt($(".pagination li:last-child a").text()) || currentPage;
+               const currentPage = parseInt($(".pagination .selected a").text()) || 1;
+               const lastPage = parseInt($(".pagination li:last-child a").text()) || currentPage;
         
-        if (currentPage < lastPage) {
-            hasNextPage = true;
+               if (currentPage < lastPage) {
+                   hasNextPage = true;
+               }
+
+               return { results: data, hasNextPage };
+
+           } catch (e) {
+               console.error("getPopularAnime error:", e.message);
+               throw new Error("Failed to fetch popular GogoAnime data.");
+           }
         }
-
-        return { results: data, hasNextPage };
-
-    } catch (e) {
-        console.error("getPopularAnime error:", e.message);
-        throw new Error("Failed to fetch popular GogoAnime data.");
-    }
-}
         
         // Multiple selector attempts for search results
         const selectors = [
@@ -242,49 +242,49 @@ async function getAnime(animeId) {
 
        // In src/gogo.js, find and replace the getEpisodeList function:
 
-async function getEpisodeList(id, page = 1) {
-    try {
-        // The endpoint is crucial for getting the list
-        const response = await fetchWithFallback(
-            `https://ajax.gogocdn.net/ajax/load-list-episode?ep_start=0&ep_end=3000&id=${id}`
-        );
-        const html = await response.text();
-        const $ = load(html);
-        const episodes = [];
+       async function getEpisodeList(id, page = 1) {
+           try {
+                // The endpoint is crucial for getting the list
+                const response = await fetchWithFallback(
+                    `https://ajax.gogocdn.net/ajax/load-list-episode?ep_start=0&ep_end=3000&id=${id}`
+               );
+               const html = await response.text();
+               const $ = load(html);
+               const episodes = [];
 
-        // FIX: Update selector to target 'li' elements from the AJAX response
-        $("li").each((i, el) => {
-            const $el = $(el);
-            const anchor = $el.find("a"); 
-            const href = anchor.attr("href");
+               // FIX: Update selector to target 'li' elements from the AJAX response
+               $("li").each((i, el) => {
+                  const $el = $(el);
+                  const anchor = $el.find("a"); 
+                  const href = anchor.attr("href");
 
-            if (href && href.includes("-episode-")) {
-                const episodeId = href.replace(/^\//, "");
-                
+                  if (href && href.includes("-episode-")) {
+                      const episodeId = href.replace(/^\//, "");
+                 
                 // Extract episode number from the .name span or fallback to parsing the ID
-                const epNumText = $el.find(".name").text().replace("EP", "").trim();
-                const epNum = epNumText || 
-                              episodeId.split("-episode-")[1] || 
-                              (i + 1); 
+                      const epNumText = $el.find(".name").text().replace("EP", "").trim();
+                      const epNum = epNumText || 
+                                    episodeId.split("-episode-")[1] || 
+                                    (i + 1); 
 
-                episodes.push({
-                    id: episodeId,
-                    episode: epNum.toString(),
-                    title: `Episode ${epNum}`,
-                    // Get language/type from the .cate span
-                    type: $el.find(".cate").text().trim() || "SUB"
-                });
-            }
-        });
+                      episodes.push({
+                          id: episodeId,
+                          episode: epNum.toString(),
+                          title: `Episode ${epNum}`,
+                          // Get language/type from the .cate span
+                          type: $el.find(".cate").text().trim() || "SUB"
+                      });
+                  }
+              });
 
-        // Return episodes in descending order (newest first)
-        return episodes.reverse();
+              // Return episodes in descending order (newest first)
+              return episodes.reverse();
 
-    } catch (e) {
-        console.error(`getEpisodeList error for ID ${id}:`, e.message);
-        throw new Error("Failed to fetch episode list.");
-    }
-}
+           } catch (e) {
+               console.error(`getEpisodeList error for ID ${id}:`, e.message);
+               throw new Error("Failed to fetch episode list.");
+           }
+       }
         
         // Extract server links
         $("div.anime_muti_link ul li, .cf-download a").each((i, el) => {
@@ -458,5 +458,6 @@ export {
     getGogoAuthKey,
     getHome,
 };
+
 
 
