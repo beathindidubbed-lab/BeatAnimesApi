@@ -9,6 +9,7 @@ import {
     getEpisode,
     GogoDLScrapper,
     getGogoAuthKey,
+    getHome,
 } from "./gogo.js";
 
 import {
@@ -20,14 +21,17 @@ import {
 import { SaveError } from "./errorHandler.js";
 import { increaseViews } from "./statsHandler.js";
 
-let CACHE = {};
-let HOME_CACHE = {};
-let ANIME_CACHE = {};
+// --- Caching Objects (In-Memory for simplicity) ---
+let HOME_CACHE = { data: null, timestamp: 0 };
+let ANIME_CACHE = {}; 
 let SEARCH_CACHE = {};
 let REC_CACHE = {};
 let RECENT_CACHE = {};
 let GP_CACHE = {};
-let AT_CACHE = {};
+let AT_CACHE = { data: null, timestamp: 0 }; // Anilist Trending
+
+const CACHE_TTL_SECONDS = 3600; // 1 hour for general content
+const HOME_CACHE_TTL_SECONDS = 300; // 5 minutes for home/trending
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -37,339 +41,163 @@ const corsHeaders = {
 
 const PORT = process.env.PORT || 8000;
 
+/**
+ * Checks if a cache entry is expired.
+ * @param {object} cacheEntry The cache object { data, timestamp }
+ * @param {number} ttlSeconds Time-to-live in seconds
+ * @returns {boolean} True if expired or empty, false otherwise.
+ */
+function isCacheExpired(cacheEntry, ttlSeconds) {
+    return !cacheEntry || !cacheEntry.data || (Date.now() - cacheEntry.timestamp) / 1000 > ttlSeconds;
+}
+
+
 http.createServer(async (req, res) => {
     let responseBody = "";
     let statusCode = 200;
     let contentType = "application/json";
 
+    // Handle CORS pre-flight requests
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, corsHeaders);
+        res.end();
+        return;
+    }
+
     try {
-        const fullUrl = new URL(req.url, `http://${req.headers.host}`);
-        const pathname = fullUrl.pathname;
+        // The URL constructor correctly parses the request URL
+        const fullUrl = new URL(req.url, `http://${req.headers.host}`); 
+        const pathSegments = fullUrl.pathname.split("/").filter(Boolean);
+        const endpoint = pathSegments[0];
+        
+        // --- 1. Increment View Count (non-blocking) ---
+        // Pass the raw headers object to statsHandler
+        increaseViews(req.headers).catch(e => console.error("Stats tracking failed:", e.message));
 
-        if (req.method === "OPTIONS") {
-            res.writeHead(204, corsHeaders);
-            res.end();
-            return;
-        }
+        // --- 2. API Routing ---
+        if (endpoint === "ping") {
+            responseBody = JSON.stringify({ status: "ok", timestamp: new Date().toISOString() });
 
-        const headers = new Map();
-        Object.entries(req.headers).forEach(([key, value]) => {
-            headers.set(key, value);
-        });
-        const requestHeaders = {
-            get: (key) => headers.get(key.toLowerCase()) || null
-        };
-
-        if (pathname.startsWith("/search/")) {
-            await increaseViews(requestHeaders);
-
-            let query, page;
-            try {
-                query = decodeURIComponent(pathname.split("/search/")[1] || "");
-                page = fullUrl.searchParams.get("page") || "1";
-            } catch (err) {
-                throw new Error("Invalid search query");
+        } else if (endpoint === "home") {
+            if (isCacheExpired(HOME_CACHE, HOME_CACHE_TTL_SECONDS)) {
+                HOME_CACHE.data = await getHome();
+                HOME_CACHE.timestamp = Date.now();
+                console.log("[CACHE] Refreshed Home Cache.");
             }
+            responseBody = JSON.stringify(HOME_CACHE.data);
 
-            if (!query) {
-                throw new Error("Search query is required");
+        } else if (endpoint === "trending") {
+            const page = parseInt(pathSegments[1] || 1);
+            const cacheKey = `anilist-trending-${page}`;
+            if (isCacheExpired(AT_CACHE[cacheKey], HOME_CACHE_TTL_SECONDS)) {
+                const data = await getAnilistTrending(page);
+                AT_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Anilist Trending Page ${page} Cache.`);
             }
+            responseBody = JSON.stringify(AT_CACHE[cacheKey].data);
 
-            const cacheKey = query + page.toString();
-            if (SEARCH_CACHE[cacheKey] != null) {
-                const t1 = Math.floor(Date.now() / 1000);
-                const t2 = SEARCH_CACHE[`time_${cacheKey}`];
-                if (t1 - t2 < 60 * 60) {
-                    responseBody = JSON.stringify({
-                        results: SEARCH_CACHE[cacheKey],
-                    });
-                }
-            }
-
-            if (!responseBody) {
+        } else if (endpoint === "search") {
+            const query = decodeURIComponent(pathSegments[1] || "");
+            const page = parseInt(pathSegments[2] || 1);
+            if (!query) throw new Error("Missing search query.");
+            
+            const cacheKey = `${query}-${page}`;
+            if (isCacheExpired(SEARCH_CACHE[cacheKey], CACHE_TTL_SECONDS)) {
                 const data = await getSearch(query, page);
-                if (!data || data.length == 0) {
-                    throw new Error("No results found");
-                }
-                SEARCH_CACHE[cacheKey] = data;
-                SEARCH_CACHE[`time_${cacheKey}`] = Math.floor(Date.now() / 1000);
-                responseBody = JSON.stringify({ results: data });
+                SEARCH_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Gogo Search Cache for: ${query} page ${page}.`);
             }
+            responseBody = JSON.stringify(SEARCH_CACHE[cacheKey].data);
 
-        } else if (pathname === "/home") {
-            await increaseViews(requestHeaders);
-
-            if (HOME_CACHE["data"] != null) {
-                const t1 = Math.floor(Date.now() / 1000);
-                const t2 = HOME_CACHE["time"];
-                if (t1 - t2 < 60 * 60) {
-                    responseBody = JSON.stringify({
-                        results: HOME_CACHE["data"],
-                    });
-                }
-            }
-
-            if (!responseBody) {
-                let anilistTrending = [];
-                let gogoPopular = [];
-                
-                try {
-                    const anilistData = await getAnilistTrending();
-                    anilistTrending = anilistData?.results || [];
-                } catch (err) {
-                    console.error("Anilist trending error:", err.message);
-                }
-                
-                try {
-                    gogoPopular = await getPopularAnime();
-                } catch (err) {
-                    console.error("Gogo popular error:", err.message);
-                }
-                
-                const data = { anilistTrending, gogoPopular };
-
-                if (anilistTrending.length == 0 && gogoPopular.length == 0) {
-                    throw new Error("Unable to fetch anime data");
-                }
-                
-                if (anilistTrending.length > 0 || gogoPopular.length > 0) {
-                    HOME_CACHE["data"] = data;
-                    HOME_CACHE["time"] = Math.floor(Date.now() / 1000);
-                }
-                responseBody = JSON.stringify({ results: data });
-            }
-
-        } else if (pathname.startsWith("/anime/")) {
-            await increaseViews(requestHeaders);
-
-            let anime = decodeURIComponent(pathname.split("/anime/")[1] || "");
-            
-            if (!anime) {
-                throw new Error("Anime ID is required");
-            }
-
-            if (ANIME_CACHE[anime] != null) {
-                const t1 = Math.floor(Date.now() / 1000);
-                const t2 = ANIME_CACHE[`time_${anime}`];
-                if (t1 - t2 < 60 * 60) {
-                    const data = { ...ANIME_CACHE[anime], from_cache: true };
-                    responseBody = JSON.stringify({ results: data });
-                }
-            }
-
-            if (!responseBody) {
-                let data;
-                try {
-                    data = await getAnime(anime);
-                    if (!data || !data.name) {
-                        throw new Error("Anime not found");
-                    }
-                    data.source = "gogoanime";
-                } catch (err) {
-                    try {
-                        const search = await getSearch(anime);
-                        if (!search || search.length === 0) {
-                            throw new Error("Not found in search");
-                        }
-                        anime = search[0].id;
-                        data = await getAnime(anime);
-                        data.source = "gogoanime";
-                    } catch (err2) {
-                        try {
-                            const search = await getAnilistSearch(anime);
-                            if (!search?.results || search.results.length === 0) {
-                                throw new Error("Not found on Anilist");
-                            }
-                            anime = search.results[0].id;
-                            data = await getAnilistAnime(anime);
-                            data.source = "anilist";
-                        } catch (err3) {
-                            throw new Error("Anime not found anywhere");
-                        }
-                    }
-                }
-
-                if (!data || Object.keys(data).length === 0) {
-                    throw new Error("Anime not found");
-                }
-                
-                if (data.episodes && data.episodes.length > 0) {
-                    ANIME_CACHE[anime] = data;
-                    ANIME_CACHE[`time_${anime}`] = Math.floor(Date.now() / 1000);
-                }
-                responseBody = JSON.stringify({ results: data });
-            }
-
-        } else if (pathname.startsWith("/episode/")) {
-            await increaseViews(requestHeaders);
-
-            const id = decodeURIComponent(pathname.split("/episode/")[1] || "");
-            if (!id) {
-                throw new Error("Episode ID is required");
-            }
-            
-            const data = await getEpisode(id);
-            if (!data) {
-                throw new Error("Episode not found");
-            }
-            responseBody = JSON.stringify({ results: data });
-
-        } else if (pathname.startsWith("/download/")) {
-            await increaseViews(requestHeaders);
-
-            const query = decodeURIComponent(pathname.split("/download/")[1] || "");
-            if (!query) {
-                throw new Error("Episode ID is required");
-            }
-
-            const timeValue = CACHE["timeValue"];
-            const cookieValue = CACHE["cookieValue"];
-            let cookie = "";
-
-            if (timeValue != null && cookieValue != null) {
-                const currentTimeInSeconds = Math.floor(Date.now() / 1000);
-                const timeDiff = currentTimeInSeconds - timeValue;
-
-                if (timeDiff > 10 * 60) {
-                    cookie = await getGogoAuthKey();
-                    CACHE.cookieValue = cookie;
-                    CACHE.timeValue = Math.floor(Date.now() / 1000);
-                } else {
-                    cookie = cookieValue;
-                }
-            } else {
-                CACHE.timeValue = Math.floor(Date.now() / 1000);
-                cookie = await getGogoAuthKey();
-                CACHE.cookieValue = cookie;
-            }
-
-            const data = await GogoDLScrapper(query, cookie);
-            responseBody = JSON.stringify({ results: data });
-
-        } else if (pathname.startsWith("/recent/")) {
-            await increaseViews(requestHeaders);
-
-            const page = pathname.split("/recent/")[1] || "1";
-
-            if (RECENT_CACHE[page] != null) {
-                const t1 = Math.floor(Date.now() / 1000);
-                const t2 = RECENT_CACHE[`time_${page}`];
-                if (t1 - t2 < 5 * 60) {
-                    responseBody = JSON.stringify({
-                        results: RECENT_CACHE[page],
-                    });
-                }
-            }
-
-            if (!responseBody) {
+        } else if (endpoint === "recent") {
+            const page = parseInt(pathSegments[1] || 1);
+            const cacheKey = `gogo-recent-${page}`;
+            if (isCacheExpired(RECENT_CACHE[cacheKey], CACHE_TTL_SECONDS)) {
                 const data = await getRecentAnime(page);
-                if (!data || data.length == 0) {
-                    throw new Error("No recent anime found");
-                }
-                RECENT_CACHE[page] = data;
-                RECENT_CACHE[`time_${page}`] = Math.floor(Date.now() / 1000);
-                responseBody = JSON.stringify({ results: data });
+                RECENT_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Gogo Recent Page ${page} Cache.`);
             }
+            responseBody = JSON.stringify(RECENT_CACHE[cacheKey].data);
 
-        } else if (pathname.startsWith("/recommendations/")) {
-            await increaseViews(requestHeaders);
-
-            let query = decodeURIComponent(pathname.split("/recommendations/")[1] || "");
-            if (!query) {
-                throw new Error("Anime name is required");
+        } else if (endpoint === "gogoPopular") {
+            const page = parseInt(pathSegments[1] || 1);
+            const cacheKey = `gogo-popular-${page}`;
+            if (isCacheExpired(GP_CACHE[cacheKey], CACHE_TTL_SECONDS)) {
+                const data = await getPopularAnime(page);
+                GP_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Gogo Popular Page ${page} Cache.`);
             }
+            responseBody = JSON.stringify(GP_CACHE[cacheKey].data);
 
-            if (REC_CACHE[query]) {
-                responseBody = JSON.stringify({
-                    results: REC_CACHE[query],
-                });
+        } else if (endpoint === "anime") {
+            const id = pathSegments[1];
+            if (!id) throw new Error("Missing anime ID.");
+
+            if (isCacheExpired(ANIME_CACHE[id], CACHE_TTL_SECONDS)) {
+                const data = await getAnime(id);
+                ANIME_CACHE[id] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Gogo Anime Cache for: ${id}.`);
             }
+            responseBody = JSON.stringify(ANIME_CACHE[id].data);
 
-            if (!responseBody) {
-                const search = await getAnilistSearch(query);
-                if (!search?.results || search.results.length === 0) {
-                    throw new Error("Anime not found");
-                }
-                
-                const anime = search.results[0].id;
-                let data = await getAnilistAnime(anime);
-                data = data?.recommendations || [];
+        } else if (endpoint === "anilistSearch") {
+            const query = decodeURIComponent(pathSegments[1] || "");
+            if (!query) throw new Error("Missing Anilist search query.");
 
-                if (data.length == 0) {
-                    throw new Error("No recommendations found");
-                }
-
-                REC_CACHE[query] = data;
-                responseBody = JSON.stringify({ results: data });
+            const cacheKey = `anilist-search-${query}`;
+            if (isCacheExpired(SEARCH_CACHE[cacheKey], CACHE_TTL_SECONDS)) {
+                const data = await getAnilistSearch(query);
+                SEARCH_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Anilist Search Cache for: ${query}.`);
             }
+            responseBody = JSON.stringify(SEARCH_CACHE[cacheKey].data);
 
-        } else if (pathname.startsWith("/gogoPopular/")) {
-            await increaseViews(requestHeaders);
+        } else if (endpoint === "anilistAnime") {
+            const id = pathSegments[1];
+            if (!id) throw new Error("Missing Anilist ID.");
 
-            let page = pathname.split("/gogoPopular/")[1] || "1";
-
-            if (GP_CACHE[page] != null) {
-                const t1 = Math.floor(Date.now() / 1000);
-                const t2 = GP_CACHE[`time_${page}`];
-                if (t1 - t2 < 10 * 60) {
-                    responseBody = JSON.stringify({
-                        results: GP_CACHE[page],
-                    });
-                }
+            const cacheKey = `anilist-anime-${id}`;
+            if (isCacheExpired(ANIME_CACHE[cacheKey], CACHE_TTL_SECONDS)) {
+                const data = await getAnilistAnime(id);
+                ANIME_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Anilist Anime Cache for: ${id}.`);
             }
+            responseBody = JSON.stringify(ANIME_CACHE[cacheKey].data);
 
-            if (!responseBody) {
-                let data = await getPopularAnime(page, 20);
-                if (!data || data.length === 0) {
-                    throw new Error("No popular anime found");
-                }
-                GP_CACHE[page] = data;
-                GP_CACHE[`time_${page}`] = Math.floor(Date.now() / 1000);
-                responseBody = JSON.stringify({ results: data });
+        } else if (endpoint === "anilistUpcoming") {
+            const page = parseInt(pathSegments[1] || 1);
+            const cacheKey = `anilist-upcoming-${page}`;
+            if (isCacheExpired(AT_CACHE[cacheKey], CACHE_TTL_SECONDS)) {
+                const data = await getAnilistUpcoming(page);
+                AT_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Anilist Upcoming Page ${page} Cache.`);
             }
+            responseBody = JSON.stringify(AT_CACHE[cacheKey].data);
 
-        } else if (pathname.startsWith("/upcoming/")) {
-            await increaseViews(requestHeaders);
+        } else if (endpoint === "episode") {
+            const id = pathSegments[1];
+            if (!id) throw new Error("Missing episode ID.");
 
-            let page = pathname.split("/upcoming/")[1] || "1";
-
-            if (AT_CACHE[page] != null) {
-                const t1 = Math.floor(Date.now() / 1000);
-                const t2 = AT_CACHE[`time_${page}`];
-                if (t1 - t2 < 60 * 60) {
-                    responseBody = JSON.stringify({
-                        results: AT_CACHE[page],
-                    });
-                }
+            const cacheKey = `episode-${id}`;
+            // NOTE: Episode links change less frequently, using the general TTL
+            if (isCacheExpired(ANIME_CACHE[cacheKey], CACHE_TTL_SECONDS)) { 
+                const data = await getEpisode(id);
+                ANIME_CACHE[cacheKey] = { data, timestamp: Date.now() };
+                console.log(`[CACHE] Refreshed Episode Cache for: ${id}.`);
             }
+            responseBody = JSON.stringify(ANIME_CACHE[cacheKey].data);
 
-            if (!responseBody) {
-                let data = await getAnilistUpcoming(page);
-                data = data?.results || [];
-                if (data.length === 0) {
-                    throw new Error("No upcoming anime found");
-                }
-                AT_CACHE[page] = data;
-                AT_CACHE[`time_${page}`] = Math.floor(Date.now() / 1000);
-                responseBody = JSON.stringify({ results: data });
-            }
+        } else if (endpoint === "download") {
+            const id = pathSegments[1];
+            if (!id) throw new Error("Missing episode ID for download.");
+            // NOTE: Not caching downloads as the cookie might expire quickly
+            const data = await GogoDLScrapper(id);
+            responseBody = JSON.stringify(data);
 
-        } else if (pathname === "/ping") {
-            responseBody = JSON.stringify({ 
-                status: "alive", 
-                timestamp: Date.now(),
-                message: "Beat Animes API is running!"
-            });
-
-        } else if (pathname === "/favicon.ico") {
-            // Return empty response for favicon requests
-            res.writeHead(204, corsHeaders);
-            res.end();
-            return;
-
-        } else if (pathname === "/") {
+        } else if (!endpoint || endpoint === "") {
+            // Serve the simple HTML documentation on the root path
             contentType = "text/html";
-            responseBody = '<!doctype html><html lang=en><meta charset=UTF-8><meta content="width=device-width,initial-scale=1"name=viewport><title>Beat Animes API</title><style>body{font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif;margin:0;padding:0;background-color:#f8f9fa;color:#495057;line-height:1.6}header{background-color:#343a40;color:#fff;text-align:center;padding:1.5em 0;margin-bottom:1em}h1{margin-bottom:.5em;font-size:2em;color:#17a2b8}p{color:#6c757d;margin-bottom:1.5em}code{background-color:#f3f4f7;padding:.2em .4em;border-radius:4px;font-family:"Courier New",Courier,monospace;color:#495057}.container{margin:1em;padding:1em;background-color:#fff;border-radius:8px;box-shadow:0 0 10px rgba(0,0,0,.1)}li,ul{list-style:none;padding:0;margin:0}li{margin-bottom:.5em}li code{background-color:#e5e7eb;color:#495057}a{color:#17a2b8;text-decoration:none}a:hover{text-decoration:underline}footer{background-color:#343a40;color:#fff;padding:1em 0;text-align:center}.status{background:#28a745;color:#fff;padding:.5em 1em;border-radius:4px;display:inline-block;margin:1em 0}</style><header><h1>Beat Animes API</h1><p>Fast & Free Anime API<div class=status>● ONLINE</div><p class=support>For support, visit our <a href=https://t.me/Beat_Anime_Discussion target=_blank>Telegram Channel</a>.</header><div class=container><h2>API Routes:</h2><ul><li><code>/home</code> - Get trending anime from Anilist and popular anime from GogoAnime<li><code>/search/{query}?page={page}</code> - Search for anime by name<li><code>/anime/{id}</code> - Get details of a specific anime<li><code>/episode/{id}</code> - Get episode stream urls<li><code>/download/{id}</code> - Get episode download urls<li><code>/recent/{page}</code> - Get recent animes from gogoanime<li><code>/recommendations/{query}</code> - Get recommendations<li><code>/gogoPopular/{page}</code> - Get popular animes from gogoanime<li><code>/upcoming/{page}</code> - Get upcoming animes from anilist<li><code>/ping</code> - Health check</ul></div><div class=container><h2>Quick Test:</h2><p>Try these endpoints:<ul><li><a href="/ping">GET /ping</a><li><a href="/home">GET /home</a><li><a href="/search/naruto">GET /search/naruto</a><li><a href="/recent/1">GET /recent/1</a></ul></div><footer><p>© 2024 Beat Animes API. All rights reserved.</footer>';
+            responseBody = '<!-- Docs HTML -->\n<style>body{font-family:sans-serif;line-height:1.6;margin:0;padding:20px;background-color:#f4f4f4;color:#333}.container{max-width:800px;margin:20px auto;padding:20px;background:#fff;border-radius:8px;box-shadow:0 0 10px rgba(0,0,0,0.1)}.header{background-color:#007bff;color:white;padding:15px;border-radius:8px 8px 0 0;text-align:center}.header h1{margin:0}.endpoint-list ul{list-style-type:none;padding:0}.endpoint-list li{background:#eee;margin-bottom:10px;padding:10px;border-left:5px solid #007bff;border-radius:4px}code{background-color:#e9ecef;padding:2px 4px;border-radius:3px}footer{text-align:center;margin-top:20px;font-size:0.9em;color:#666}</style><div class=header><h1>Beat Animes API Documentation</h1><p>Anime data from GogoAnime and Anilist</p></div><div class=container><div class=endpoint-list><h2>Endpoints:</h2><ul><li><code>/home</code> - Get GogoAnime's homepage data (recent & trending)<li><code>/search/{query}/{page?}</code> - Search GogoAnime for anime<li><code>/anime/{id}</code> - Get anime details and episode list from GogoAnime<li><code>/episode/{id}</code> - Get streaming video urls<li><code>/download/{id}</code> - Get episode download urls<li><code>/recent/{page}</code> - Get recent animes from gogoanime<li><code>/trending/{page}</code> - Get trending animes from anilist<li><code>/anilistSearch/{query}</code> - Search Anilist for anime<li><code>/anilistAnime/{id}</code> - Get detailed Anilist data for an anime<li><code>/anilistUpcoming/{page}</code> - Get upcoming animes from anilist<li><code>/gogoPopular/{page}</code> - Get popular animes from gogoanime<li><code>/ping</code> - Health check</ul></div><div class=container><h2>Quick Test:</h2><p>Try these endpoints:<ul><li><a href=\"/ping\">GET /ping</a><li><a href=\"/home\">GET /home</a><li><a href=\"/search/naruto\">GET /search/naruto</a><li><a href=\"/recent/1\">GET /recent/1</a></ul></div><footer><p>© 2024 Beat Animes API. All rights reserved.</footer>';
         } else {
             throw new Error("Endpoint not found");
         }
@@ -391,9 +219,6 @@ http.createServer(async (req, res) => {
         ...corsHeaders
     });
     res.end(responseBody);
-
-}).listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Beat Animes API is running`);
-    console.log(`🌐 Port: ${PORT}`);
-    console.log(`📡 Ready to accept requests`);
+}).listen(PORT, () => {
+    console.log(`✅ Server is running on http://localhost:${PORT}`);
 });
