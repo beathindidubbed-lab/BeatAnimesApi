@@ -67,26 +67,34 @@ async function getHome() {
     try {
         const response = await fetchWithFallback("/?page=1");
         const html = await response.text();
-        const body = load(html); // Using the imported 'load' function
+        const body = load(html); 
         
         const recent = [];
-        body("div.last_episodes ul.items li").each((i, el) => {
+        // REINFORCED SELECTOR: Targeting list items in the main body recent section
+        body("div.main_body div.last_episodes ul.items li").each((i, el) => {
             const $el = body(el);
+            const linkEl = $el.find("p.name a");
+            const title = linkEl.attr("title") || linkEl.text().trim(); // Use text if title attribute is missing
+            
             recent.push({
-                id: $el.find("p.name a").attr("href").replace("/", ""),
-                title: $el.find("p.name a").attr("title"),
+                id: linkEl.attr("href").replace("/", ""),
+                title: title,
                 image: $el.find("div.img a img").attr("src"),
-                release: $el.find("p.released").text().trim(),
+                release: $el.find("p.released").text().trim(), 
                 episode: parseInt($el.find("p.episode").text().trim().replace("Episode ", "")),
             });
         });
 
         const trending = [];
-        body("div.clr.wk-ep-list ul.items li").each((i, el) => {
+        // REINFORCED SELECTOR: Targeting list items in the trending section
+        body("div.main_body div.right_content div.clr.wk-ep-list ul.items li").each((i, el) => {
             const $el = body(el);
+            const linkEl = $el.find("p.name a");
+            const title = linkEl.attr("title") || linkEl.text().trim(); // Use text if title attribute is missing
+            
             trending.push({
-                id: $el.find("p.name a").attr("href").replace("/", ""),
-                title: $el.find("p.name a").attr("title"),
+                id: linkEl.attr("href").replace("/", ""),
+                title: title,
                 image: $el.find("div.img a img").attr("src"),
                 release: $el.find("p.released").text().trim(),
             });
@@ -108,23 +116,34 @@ async function getHome() {
  * @returns {Promise<object>} Search results
  */
 async function getSearch(query, page = 1) {
+    let html = "";
     try {
         const response = await fetchWithFallback(
             `/search.html?keyword=${query}&page=${page}`
         );
-        const html = await response.text();
-        const body = load(html); // Using the imported 'load' function
+        html = await response.text(); // Capture HTML here
+        const body = load(html); 
 
         const data = [];
-        body("div.last_episodes ul.items li").each((i, el) => {
+        // REINFORCED SELECTOR: Targeting list items in the main body search results
+        body("div.main_body div.last_episodes ul.items li").each((i, el) => {
             const $el = body(el);
+            const linkEl = $el.find("p.name a");
+            const title = linkEl.attr("title") || linkEl.text().trim(); // Use text if title attribute is missing
+            
             data.push({
-                id: $el.find("p.name a").attr("href").replace("/category/", ""),
-                title: $el.find("p.name a").attr("title"),
+                id: linkEl.attr("href").replace("/category/", ""),
+                title: title,
                 image: $el.find("div.img a img").attr("src"),
                 release: $el.find("p.released").text().trim(),
             });
         });
+
+        if (data.length === 0) {
+            console.warn(`[GOGO DEBUG] Search for '${query}' returned 0 results.`);
+            // DEBUG LOG: Log the start of the HTML body if no results were found
+            console.warn(`[GOGO DEBUG] HTML Snippet (First 500 chars):\n${html.substring(0, 500)}...`);
+        }
 
         return { results: data };
     } catch (e) {
@@ -150,6 +169,7 @@ async function getAnime(animeId) {
             id: animeId,
             title: detailEl.find("h1").text().trim(),
             image: detailEl.find("img").attr("src"),
+            // Using a more robust path for synopsis (or default to a known structure)
             synopsis: body("div.anime_info_body_bg p.type:nth-child(5)").text().replace("Plot Summary: ", "").trim(),
             genres: body("div.anime_info_body_bg p.type:nth-child(6) a").map((i, el) => body(el).attr("title")).get(),
             release: body("div.anime_info_body_bg p.type:nth-child(7)").text().replace("Released: ", "").trim(),
