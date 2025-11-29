@@ -308,17 +308,20 @@ async function getEpisode(episodeId) {
         const gogoHtml = await gogoResponse.text();
         const gogoBody = load(gogoHtml); // Using the imported 'load' function
 
+        // Note: The ID is typically passed as a search parameter in the iframe URL
         const embeddedVideoId = gogoUrl.searchParams.get("id");
         if (!embeddedVideoId) {
-            throw new Error("Could not find embedded video ID.");
+            throw new Error("Could not find embedded video ID in iframe URL.");
         }
 
+        // --- Core Decryption Step ---
         const params = await generateEncryptAjaxParameters(gogoBody, embeddedVideoId);
         const encryptedAjaxUrl = `${gogoUrl.origin}/encrypt-ajax.php?${params}`;
 
         const encryptedResponse = await fetch(encryptedAjaxUrl, {
             headers: {
-                "X-Requested-With": "XMLHttpRequest",
+                // This header is crucial for the server to recognize the request as an AJAX request
+                "X-Requested-With": "XMLHttpRequest", 
             },
         });
         
