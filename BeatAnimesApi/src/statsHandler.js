@@ -3,24 +3,27 @@ const CACHE = {}
 
 async function increaseViews(headers) {
     try {
-        let referer = String(headers.get("Referer"));
-        if (referer == 'null') {
-            referer = String(headers.get("referer"));
-        }
-        if (referer == 'null') {
+        // FIX: headers is a standard Node.js object, not a browser Headers object.
+        // We access properties directly (Node.js lowercases all header keys).
+        let referer = String(headers.referer || headers.Referer || 'null');
+        
+        if (referer === 'null' || referer === 'undefined') {
             referer = "direct";
         }
         else {
             try {
-                const url = new URL(referer);
+                // Ensure referer is a string before passing to URL constructor
+                const url = new URL(String(referer));
                 referer = url.origin
             }
             catch (e) {
-                console.log(e)
+                console.log("Error processing referer URL:", e.message);
+                referer = "direct"; // Fallback to 'direct' if URL construction fails
             }
         }
+        
         const website = referer
-        console.log(website)
+        console.log("Tracking view for:", website)
 
         if (CACHE[website]) {
             CACHE[website] += 1
@@ -37,9 +40,8 @@ async function increaseViews(headers) {
 
         CACHE[website] = 0
     } catch (e) {
-        console.log(e)
+        console.log("Global increaseViews error:", e.message)
     }
 }
 
-// Changed to default export
 export default increaseViews
