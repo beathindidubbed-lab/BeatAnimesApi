@@ -1,5 +1,5 @@
 function anilistSearchQuery(query, page, perPage = 10, type = "ANIME") {
-    return `query ($page: Int = ${page}, $id: Int, $type: MediaType = ${type}, $search: String = "${query}", $isAdult: Boolean = false, $size: Int = ${perPage}) { Page(page: $page, perPage: $size) { pageInfo { total perPage currentPage lastPage hasNextPage } media(id: $id, type: $type, search: $search, isAdult: $isAdult) { id status(version: 2) title { userPreferred romaji english native } bannerImage popularity coverImage{ extraLarge large medium color } episodes format season description seasonYear averageScore genres  } } }`;
+    return `query ($page: Int = ${page}, $id: Int, $type: MediaType = ${type}, $search: String = \"${query}\", $isAdult: Boolean = false, $size: Int = ${perPage}) { Page(page: $page, perPage: $size) { pageInfo { total perPage currentPage lastPage hasNextPage } media(id: $id, type: $type, search: $search, isAdult: $isAdult) { id status(version: 2) title { userPreferred romaji english native } bannerImage popularity coverImage{ extraLarge large medium color } episodes format season description seasonYear averageScore genres  } } }`;
 }
 
 function anilistTrendingQuery(page = 1, perPage = 10, type = "ANIME") {
@@ -7,19 +7,27 @@ function anilistTrendingQuery(page = 1, perPage = 10, type = "ANIME") {
 }
 
 function anilistMediaDetailQuery(id) {
-    return `query ($id: Int = ${id}) { Media(id: $id) { id title { english native romaji userPreferred } coverImage { extraLarge large color } bannerImage season seasonYear description type format status(version: 2) episodes genres averageScore popularity meanScore recommendations { edges { node { id mediaRecommendation { id meanScore title { romaji english native userPreferred } status episodes coverImage { extraLarge large medium color } bannerImage format } } } } } }`;
+    return `query ($id: Int = ${id}) { Media(id: $id) { id status(version: 2) title { userPreferred romaji english native } bannerImage popularity coverImage{ extraLarge large medium color } episodes format season description seasonYear averageScore genres recommendations { edges { node { id status(version: 2) title { userPreferred romaji english native } coverImage{ extraLarge large medium color } } } } } }`;
 }
 
-function  anilistUpcomingQuery(page){
-  const perPage=20
-  const notYetAired=true
-
-  return `query { Page(page: ${page}, perPage: ${perPage}) { pageInfo { total perPage currentPage lastPage hasNextPage } airingSchedules( notYetAired: ${notYetAired}) { airingAt episode media { id description idMal title { romaji english userPreferred native } countryOfOrigin description popularity bannerImage coverImage { extraLarge large medium color } genres averageScore seasonYear format } } } }`;
-
+function anilistUpcomingQuery(page = 1, perPage = 10, type = "ANIME") {
+    const year = new Date().getFullYear();
+    return `query ($page: Int = ${page}, $id: Int, $type: MediaType = ${type}, $isAdult: Boolean = false, $size: Int = ${perPage}, $sort: [MediaSort] = [POPULARITY_DESC], $season: MediaSeason = WINTER) { Page(page: $page, perPage: $size) { pageInfo { total perPage currentPage lastPage hasNextPage } media(id: $id, type: $type, isAdult: $isAdult, sort: $sort, season: $season, seasonYear: ${year}) { id status(version: 2) title { userPreferred romaji english native } genres description format bannerImage coverImage{ extraLarge large medium color } episodes meanScore season seasonYear averageScore } } }`;
 }
-async function getAnilistTrending() {
+
+// Function to determine the current or next season (used for Upcoming)
+function getCurrentSeason() {
+    const month = new Date().getMonth();
+    if (month >= 2 && month <= 4) return "SPRING";
+    if (month >= 5 && month <= 7) return "SUMMER";
+    if (month >= 8 && month <= 10) return "FALL";
+    // December, January, February
+    return "WINTER";
+}
+
+async function getAnilistTrending(page = 1, perPage = 10) {
     const url = "https://graphql.anilist.co";
-    const query = anilistTrendingQuery();
+    const query = anilistTrendingQuery(page, perPage);
     const options = {
         method: "POST",
         headers: {
@@ -31,16 +39,20 @@ async function getAnilistTrending() {
         }),
     };
     const res = await fetch(url, options);
-    let data = await res.json();
-    data = {
-        results: data["data"]["Page"]["media"],
-    };
-    return data;
+    const data = await res.json();
+    
+    // FIX: Add check for data existence to prevent 'Cannot read properties of null (reading 'Page')'
+    if (!data || !data.data || !data.data.Page) {
+        console.error("Anilist Trending Fetch Failed:", data?.errors || "Unknown Error");
+        return { pageInfo: {}, media: [] }; // Return empty structure on failure
+    }
+
+    return data["data"]["Page"];
 }
 
-async function getAnilistUpcoming(page) {
+async function getAnilistUpcoming(page = 1, perPage = 10) {
     const url = "https://graphql.anilist.co";
-    const query = anilistUpcomingQuery(page);
+    const query = anilistUpcomingQuery(page, perPage).replace("WINTER", getCurrentSeason()); // Use dynamic season
     const options = {
         method: "POST",
         headers: {
@@ -52,11 +64,15 @@ async function getAnilistUpcoming(page) {
         }),
     };
     const res = await fetch(url, options);
-    let data = await res.json();
-    data = {
-        results: data["data"]["Page"]["airingSchedules"],
-    };
-    return data;
+    const data = await res.json();
+    
+    // FIX: Add check for data existence to prevent 'Cannot read properties of null (reading 'Page')'
+    if (!data || !data.data || !data.data.Page) {
+        console.error("Anilist Upcoming Fetch Failed:", data?.errors || "Unknown Error");
+        return { pageInfo: {}, media: [] }; // Return empty structure on failure
+    }
+
+    return data["data"]["Page"];
 }
 
 async function getAnilistSearch(query) {
@@ -74,6 +90,13 @@ async function getAnilistSearch(query) {
     };
     const res = await fetch(url, options);
     let data = await res.json();
+    
+    // Add check for search data existence
+    if (!data || !data.data || !data.data.Page) {
+        console.error("Anilist Search Fetch Failed:", data?.errors || "Unknown Error");
+        return { results: [] };
+    }
+    
     data = {
         results: data["data"]["Page"]["media"],
     };
@@ -97,14 +120,27 @@ async function getAnilistAnime(id) {
     };
     const res = await fetch(url, options);
     let data = await res.json();
+    
+    // Add check for detail data existence
+    if (!data || !data.data || !data.data.Media) {
+        console.error("Anilist Media Detail Fetch Failed:", data?.errors || "Unknown Error");
+        throw new Error("Failed to fetch anime details from Anilist.");
+    }
+    
     let results = data["data"]["Media"];
     results["recommendations"] = results["recommendations"]["edges"];
 
     for (let i = 0; i < results["recommendations"].length; i++) {
-        const rec = results["recommendations"][i];
-        results["recommendations"][i] = rec["node"]["mediaRecommendation"];
+        results["recommendations"][i] =
+            results["recommendations"][i]["node"];
     }
+
     return results;
 }
 
-export { getAnilistTrending, getAnilistSearch, getAnilistAnime ,getAnilistUpcoming};
+export {
+    getAnilistTrending,
+    getAnilistSearch,
+    getAnilistAnime,
+    getAnilistUpcoming,
+};
