@@ -82,7 +82,7 @@ async function getHome() {
         const recent = [];
         const trending = [];
 
-        // Updated selectors for Anitaku structure
+        // Updated selectors for structure
         // Recent episodes - Updated selector
         $("div.last_episodes ul.items li, ul.items li").each((i, el) => {
             const $el = $(el);
@@ -108,42 +108,49 @@ async function getHome() {
             });
         });
 
-        // Trending/Popular - Updated selector
-        $("div.added_series_body.popular ul.listing li, nav.genre ul li").each((i, el) => {
-            const $el = $(el);
-            const linkEl = $el.find("a");
-            const title = linkEl.attr("title") || linkEl.text().trim();
-            
-            if (!title) return;
-            
-            const href = linkEl.attr("href");
-            const imageEl = $el.find("img");
-            const image = imageEl.attr("src") || imageEl.attr("data-src");
-            
-            trending.push({
-                id: href ? href.replace(/^\/category\//, "").replace(/^\//, "") : "",
-                title: title,
-                image: image || "",
-                release: $el.find("p.released, .released").text().replace("Released: ", "").trim()
-            });
-        });
+        // In src/gogo.js, find and replace the getPopularAnime function:
 
-        console.log(`[GOGO] Home loaded: ${recent.length} recent, ${trending.length} trending`);
-        return { recent, trending };
-
-    } catch (e) {
-        console.error("getHome error:", e.message);
-        throw new Error("Failed to load GogoAnime homepage data.");
-    }
-}
-
-async function getSearch(query, page = 1) {
+async function getPopularAnime(page = 1) {
     try {
-        const response = await fetchWithFallback(`/search.html?keyword=${encodeURIComponent(query)}&page=${page}`);
+        const response = await fetchWithFallback(`/popular.html?page=${page}`);
         const html = await response.text();
         const $ = load(html);
-
         const data = [];
+        let hasNextPage = false;
+
+        // FIX: Updated selector for the popular list items
+        $('div.last_episodes > ul.items > li').each((i, el) => {
+            const $el = $(el);
+            const animeId = $el.find("a").attr("href").replace("/category/", "");
+            const image = $el.find(".img img").attr("src");
+            const title = $el.find(".name a").text();
+            const released = $el.find(".released").text().trim(); // Selector for release year
+
+            if (animeId && title) {
+                data.push({
+                    id: animeId,
+                    title: title,
+                    image: image,
+                    releaseDate: released,
+                });
+            }
+        });
+
+        // Check for next page
+        const currentPage = parseInt($(".pagination .selected a").text()) || 1;
+        const lastPage = parseInt($(".pagination li:last-child a").text()) || currentPage;
+        
+        if (currentPage < lastPage) {
+            hasNextPage = true;
+        }
+
+        return { results: data, hasNextPage };
+
+    } catch (e) {
+        console.error("getPopularAnime error:", e.message);
+        throw new Error("Failed to fetch popular GogoAnime data.");
+    }
+}
         
         // Multiple selector attempts for search results
         const selectors = [
@@ -451,4 +458,5 @@ export {
     getGogoAuthKey,
     getHome,
 };
+
 
