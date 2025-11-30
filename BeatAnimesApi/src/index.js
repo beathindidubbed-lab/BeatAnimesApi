@@ -186,24 +186,27 @@ http.createServer(async (req, res) => {
                 responseBody = JSON.stringify({ results: data });
             }
         
+
         } else if (path.startsWith("/episode/")) {
             const episodeId = decodeURIComponent(path.substring(9));
+            const language = searchParams.get("lang") || "sub"; // sub, dub, or hindi
 
-            if (CACHE[episodeId] && CACHE[episodeId].expires > Date.now()) {
-                responseBody = JSON.stringify(CACHE[episodeId].data);
-            } else {
-                const episodeData = await getEpisode(episodeId);
-                
-                const responseData = {
-                    results: episodeData
-                };
-                
-                CACHE[episodeId] = {
-                    data: responseData,
-                    expires: Date.now() + 5 * 60 * 1000,
-                };
-                responseBody = JSON.stringify(responseData);
-            }
+            const cacheKey = `${episodeId}_${language}`;
+            if (CACHE[cacheKey] && CACHE[cacheKey].expires > Date.now()) {
+                responseBody = JSON.stringify(CACHE[cacheKey].data);
+           } else {
+               const episodeData = await getEpisode(episodeId, language);
+        
+               const responseData = {
+                   results: episodeData
+              };
+        
+              CACHE[cacheKey] = {
+               data: responseData,
+               expires: Date.now() + 5 * 60 * 1000,
+             };
+              responseBody = JSON.stringify(responseData);
+        
         } else if (path.startsWith("/download/")) {
             const episodeId = decodeURIComponent(path.substring(10));
 
@@ -398,6 +401,7 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
 
 
 
