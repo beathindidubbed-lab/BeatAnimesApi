@@ -9,7 +9,7 @@ import {
     getEpisode,
     GogoDLScrapper,
     getGogoAuthKey,
-    getHome,
+    getHome, // <-- Added getHome import
 } from "./gogo.js";
 
 import {
@@ -21,14 +21,15 @@ import {
 import { SaveError } from "./errorHandler.js";
 import increaseViews from "./statsHandler.js";
 
-let CACHE = {};
-let HOME_CACHE = {};
-let ANIME_CACHE = {};
-let SEARCH_CACHE = {};
-let REC_CACHE = {};
-let RECENT_CACHE = {};
-let GP_CACHE = {};
-let AT_CACHE = {};
+// Cache Objects
+let CACHE = {}; // Used for /episode and /upcoming
+let HOME_CACHE = {}; // Used for /home
+let ANIME_CACHE = {}; // Used for /anime
+let SEARCH_CACHE = {}; // Used for /search
+let REC_CACHE = {}; // Used for /recommendations
+let RECENT_CACHE = {}; // Used for /recent
+let GP_CACHE = {}; // Used for /gogoPopular
+let AT_CACHE = {}; // Used for /trending
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -48,11 +49,13 @@ http.createServer(async (req, res) => {
         const path = fullUrl.pathname;
         const searchParams = fullUrl.searchParams;
 
+        // Handle CORS preflight requests
         if (req.method === "OPTIONS") {
             res.writeHead(204, corsHeaders);
             return res.end();
         }
 
+        // Track views (async, fire-and-forget)
         increaseViews(req.headers).catch((e) => console.error("Views tracking failed:", e.message));
 
         // Router
@@ -61,65 +64,28 @@ http.createServer(async (req, res) => {
                 status: "ok",
                 timestamp: new Date().toISOString(),
             });
-        } else if async function initializePage() {
-            try {
-                console.log("🚀 Starting BeatAnimes...");
-                document.getElementById("load").style.display = "block";
-
-                console.log("📡 Fetching /home API...");
-               const homeResponse = await getJson(IndexApi);
-               console.log("📦 Home API Response:", homeResponse);
-        
-        // ✅ FIXED: Proper data extraction
-              let homeData = homeResponse.results || homeResponse;
-        
-        // Extract arrays directly
-              let popularData = homeData.popular || [];
-              let recentData = homeData.recent || [];
-              let trendingData = homeData.trending || [];
-        
-              console.log(`📊 Extracted: ${popularData.length} popular, ${recentData.length} recent, ${trendingData.length} trending`);
-
-        // Load all sections
-              if (popularData.length > 0) {
-                  await getTrendingAnimes(popularData);
-                  await getPopularAnimes(popularData);
-            
-            // Start slider
-                  slideIndex = 1;
-                  showSlides(slideIndex);
-                  showSlides2();
-              } else {
-                  console.error("❌ No popular data - banner and popular sections will be empty");
-              }
-
-              if (recentData.length > 0) {
-                  await initRecentSection(recentData);
-              } else {
-                  console.warn("⚠️ No recent data from /home, will try /recent/1");
-                  await getRecentAnimes(1);
-              }
-
-              createLoadMoreButton();
-              RefreshLazyLoader();
-        
-              document.getElementById("load").style.display = "none";
-              console.log("✅ Page loaded successfully!");
-
-            } catch (error) {
-               console.error("❌ Fatal error:", error);
-               document.getElementById("load").innerHTML = `
-                   <div style="color: white; text-align: center; padding: 40px;">
-                       <h2 style="color: #eb3349;">⚠️ Failed to Load</h2>
-                       <p style="margin: 20px 0;">${error.message}</p>
-                       <p style="font-size: 14px; opacity: 0.7;">Check console for details (F12)</p>
-                       <button onclick="location.reload()" style="background: #eb3349; color: white; padding: 12px 30px; border: none; border-radius: 25px; cursor: pointer; font-size: 16px; margin-top: 20px;">
-                          🔄 Retry
-                       </button>
-                   </div>
-              `;
+        } else if (path === "/home") { // <-- CORRECTED: Added the missing /home endpoint
+            const cacheKey = "home";
+            if (HOME_CACHE[cacheKey] && HOME_CACHE[cacheKey].expires > Date.now()) {
+                responseBody = JSON.stringify(HOME_CACHE[cacheKey].data);
+            } else {
+                const homeData = await getHome();
+                
+                // Fetch trending data to combine into the home response
+                const trendingData = await getAnilistTrending(1, 20);
+                
+                const responseData = {
+                    popular: homeData.popular || [],
+                    recent: homeData.recent || [],
+                    trending: trendingData.media || [], // Use Anilist trending for better data
+                };
+                
+                HOME_CACHE[cacheKey] = {
+                    data: responseData,
+                    expires: Date.now() + 15 * 60 * 1000, // 15 minutes cache
+                };
+                responseBody = JSON.stringify(responseData);
             }
-            
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
             const page = parseInt(searchParams.get("page")) || 1;
@@ -155,7 +121,8 @@ http.createServer(async (req, res) => {
                             status: gogoData.details.status,
                             genre: gogoData.details.genres.join(", "),
                             type: "TV",
-                            episodes: gogoData.episodes.map(ep => [ep.episode, ep.id])
+                            // Changed episode mapping for clearer object structure
+                            episodes: gogoData.episodes.map(ep => ({ episode: ep.episode, id: ep.id })) 
                         }
                     };
                     
@@ -173,6 +140,7 @@ http.createServer(async (req, res) => {
                         throw new Error("Anime not found on GogoAnime or Anilist");
                     }
                     
+                    // Assuming getAnilistAnime takes the first result's ID from the search
                     const anilistData = await getAnilistAnime(anilistSearch.results[0].id);
                     
                     const responseData = {
@@ -210,8 +178,9 @@ http.createServer(async (req, res) => {
         } else if (path.startsWith("/download/")) {
             const episodeId = decodeURIComponent(path.substring(10));
 
-            if (CACHE[`dl_${episodeId}`] && CACHE[`dl_${episodeId}`].expires > Date.now()) {
-                responseBody = JSON.stringify(CACHE[`dl_${episodeId}`].data);
+            const cacheKey = `dl_${episodeId}`;
+            if (CACHE[cacheKey] && CACHE[cacheKey].expires > Date.now()) {
+                responseBody = JSON.stringify(CACHE[cacheKey].data);
             } else {
                 const dlData = await GogoDLScrapper(episodeId);
                 
@@ -219,7 +188,7 @@ http.createServer(async (req, res) => {
                     results: dlData
                 };
                 
-                CACHE[`dl_${episodeId}`] = {
+                CACHE[cacheKey] = {
                     data: responseData,
                     expires: Date.now() + 60 * 60 * 1000,
                 };
@@ -306,7 +275,7 @@ http.createServer(async (req, res) => {
                 
                 CACHE[cacheKey] = {
                     data: responseData,
-                    expires: Date.now() + 24 * 60 * 60 * 1000,
+                    expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours cache
                 };
                 responseBody = JSON.stringify(responseData);
             }
@@ -315,6 +284,7 @@ http.createServer(async (req, res) => {
             responseBody = JSON.stringify({ authKey: authKey });
         } else if (path === "/") {
             contentType = "text/html";
+            // The HTML response for the root path remains the same
             responseBody = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -385,6 +355,7 @@ http.createServer(async (req, res) => {
         console.error(`❌ API Error [${req.url}]:`, e.message);
         await SaveError(e.message, req.url).catch(() => {});
         
+        // Determine status code based on error message
         statusCode = e.message.includes("not found") ? 404 : 500;
         responseBody = JSON.stringify({ 
             error: e.message || "Internal Server Error",
@@ -401,5 +372,3 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
-
-
