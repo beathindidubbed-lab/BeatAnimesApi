@@ -64,7 +64,8 @@ http.createServer(async (req, res) => {
                 status: "ok",
                 timestamp: new Date().toISOString(),
             });
-        // ✅ FIXED /home endpoint - put this in your index.js
+        // ✅ Put these in your index.js - Replace both /home and /anime endpoints
+
         } else if (path === "/home") {
             if (HOME_CACHE.data && HOME_CACHE.expires > Date.now()) {
                 responseBody = JSON.stringify(HOME_CACHE.data);
@@ -104,6 +105,74 @@ http.createServer(async (req, res) => {
                     }
                 }
             }
+        } else if (path.startsWith("/anime/")) {
+            const animeid = decodeURIComponent(path.substring(7));
+
+            if (ANIME_CACHE[animeid] && ANIME_CACHE[animeid].expires > Date.now()) {
+                responseBody = JSON.stringify(ANIME_CACHE[animeid].data);
+            } else {
+                try {
+                    console.log(`📺 Fetching anime: ${animeid}`);
+                    const gogoData = await getAnime(animeid);
+                    
+                    console.log(`✅ GoGo returned ${gogoData.episodes.length} episodes for ${animeid}`);
+                    
+                    // ✅ FIXED: Return episodes in the format frontend expects
+                    // Frontend expects: [[episode_num, episode_id], ...]
+                    const episodeArray = gogoData.episodes.map(ep => [
+                        ep.episode,  // Episode number (e.g., "1", "2", "3")
+                        ep.id        // Episode ID (e.g., "naruto-episode-1")
+                    ]);
+                    
+                    const responseData = {
+                        results: {
+                            source: "gogoanime",
+                            name: gogoData.details.title,
+                            image: gogoData.details.image,
+                            plot_summary: gogoData.details.synopsis,
+                            other_name: gogoData.details.otherName,
+                            released: gogoData.details.release,
+                            status: gogoData.details.status,
+                            genre: gogoData.details.genres.join(", "),
+                            type: gogoData.details.type || "TV",
+                            episodes: episodeArray  // [[1, "naruto-episode-1"], [2, "naruto-episode-2"], ...]
+                        }
+                    };
+                    
+                    ANIME_CACHE[animeid] = {
+                        data: responseData,
+                        expires: Date.now() + 60 * 60 * 1000,
+                    };
+                    
+                    console.log(`✅ Cached ${animeid} with ${episodeArray.length} episodes`);
+                    responseBody = JSON.stringify(responseData);
+                } catch (gogoError) {
+                    console.warn(`⚠️ Gogo failed for ${animeid}, trying Anilist:`, gogoError.message);
+                    
+                    // Fallback to Anilist
+                    const anilistSearch = await getAnilistSearch(animeid);
+                    if (!anilistSearch.results || anilistSearch.results.length === 0) {
+                        throw new Error("Anime not found on GogoAnime or Anilist");
+                    }
+                    
+                    const anilistData = await getAnilistAnime(anilistSearch.results[0].id);
+                    
+                    const responseData = {
+                        results: {
+                            source: "anilist",
+                            ...anilistData,
+                            episodes: []  // Anilist doesn't have episode links
+                        }
+                    };
+                    
+                    ANIME_CACHE[animeid] = {
+                        data: responseData,
+                        expires: Date.now() + 60 * 60 * 1000,
+                    };
+                    responseBody = JSON.stringify(responseData);
+                }
+            }
+        }
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
             const page = parseInt(searchParams.get("page")) || 1;
@@ -390,4 +459,5 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
 
