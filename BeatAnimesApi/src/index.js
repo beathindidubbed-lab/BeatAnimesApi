@@ -44,324 +44,307 @@ http.createServer(async (req, res) => {
     let contentType = "application/json";
 
     try {
-        const fullUrl = new URL(req.url, process.env.BASE_URL || "http://localhost:8000");
-        const url = fullUrl;
-        const path = url.pathname;
-        await increaseViews(req.headers).catch(e => console.log('Increase views error', e.message));
+        const fullUrl = new URL(req.url, `http://${req.headers.host}`);
+        const path = fullUrl.pathname;
+        const searchParams = fullUrl.searchParams;
 
+        if (req.method === "OPTIONS") {
+            res.writeHead(204, corsHeaders);
+            return res.end();
+        }
+
+        increaseViews(req.headers).catch((e) => console.error("Views tracking failed:", e.message));
+
+        // Router
         if (path === "/ping") {
-            responseBody = JSON.stringify({ message: "API is online!" });
-        }
+            responseBody = JSON.stringify({
+                status: "ok",
+                timestamp: new Date().toISOString(),
+            });
+        } else if (path === "/home") {
+            if (HOME_CACHE.data && HOME_CACHE.expires > Date.now()) {
+                responseBody = JSON.stringify({ results: HOME_CACHE.data });
+            } else {
+                try {
+                    const [gogoHome, anilistTrending, anilistUpcoming] = await Promise.allSettled([
+                        getHome(),
+                        getAnilistTrending(1, 10),
+                        getAnilistUpcoming(1, 10)
+                    ]);
 
-        // ------------------
-        // ROUTE: /home (FIXED: Popular fallback logic)
-        // ------------------
-        else if (path === "/home") {
-            const cacheKey = "home";
-            if (HOME_CACHE[cacheKey] && HOME_CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify({
-                    trending: HOME_CACHE[cacheKey].data.anilistTrending,
-                    popular: { results: HOME_CACHE[cacheKey].data.gogoPopular },
-                    recent: { results: HOME_CACHE[cacheKey].data.gogoRecent },
-                    upcoming: HOME_CACHE[cacheKey].data.anilistUpcoming,
-                });
-                return;
+                    const data = {
+                        gogoRecent: gogoHome.status === 'fulfilled' ? gogoHome.value.recent : [],
+                        gogoPopular: gogoHome.status === 'fulfilled' ? gogoHome.value.trending : [],
+                        anilistTrending: anilistTrending.status === 'fulfilled' && anilistTrending.value?.media 
+                            ? anilistTrending.value.media 
+                            : [],
+                        anilistUpcoming: anilistUpcoming.status === 'fulfilled' && anilistUpcoming.value?.media 
+                            ? anilistUpcoming.value.media 
+                            : []
+                    };
+
+                    // Simplified response structure for frontend
+                    const simplifiedData = {
+                        trending: data.anilistTrending,
+                        popular: { results: data.gogoPopular },
+                        recent: { results: data.gogoRecent },
+                        upcoming: data.anilistUpcoming
+                    };
+
+                    HOME_CACHE = {
+                        data: simplifiedData,
+                        expires: Date.now() + 30 * 60 * 1000, // 30 minutes cache
+                    };
+                    
+                    responseBody = JSON.stringify({ results: simplifiedData });
+                } catch (error) {
+                    console.error("Home API error:", error);
+                    // Return cached data if available, even if expired
+                    if (HOME_CACHE.data) {
+                        responseBody = JSON.stringify({ results: HOME_CACHE.data });
+                    } else {
+                        throw error;
+                    }
+                }
             }
+        } else if (path.startsWith("/search/")) {
+            const query = decodeURIComponent(path.substring(8));
+            const page = parseInt(searchParams.get("page")) || 1;
 
-            // Run parallel calls, including dedicated fallbacks for GogoAnime data
-            const [gogoHome, anilistTrending, anilistUpcoming, gogoRecentFallback, gogoPopularFallback] = await Promise.allSettled([
-                getHome(),
-                getAnilistTrending(1, 10),
-                getAnilistUpcoming(1, 10),
-                getRecentAnime(1),
-                getPopularAnime(1)
-            ]);
-
-            let gogoRecentData = [];
-            // Prioritize recent data from getHome, fallback to getRecentAnime
-            if (gogoHome.status === 'fulfilled' && gogoHome.value.recent && gogoHome.value.recent.length > 0) {
-                gogoRecentData = gogoHome.value.recent;
-            } 
-            else if (gogoRecentFallback.status === 'fulfilled' && gogoRecentFallback.value.results) {
-                gogoRecentData = gogoRecentFallback.value.results;
-            }
-
-            let gogoPopularData = [];
-            // Prioritize popular/trending data from getHome, fallback to getPopularAnime
-            if (gogoHome.status === 'fulfilled' && gogoHome.value.trending && gogoHome.value.trending.length > 0) {
-                gogoPopularData = gogoHome.value.trending;
-            } 
-            else if (gogoPopularFallback.status === 'fulfilled' && gogoPopularFallback.value.results) {
-                gogoPopularData = gogoPopularFallback.value.results;
-            }
-
-            const data = {
-                anilistTrending: anilistTrending.status === 'fulfilled' ? anilistTrending.value.results : [],
-                anilistUpcoming: anilistUpcoming.status === 'fulfilled' ? anilistUpcoming.value.results : [],
-                gogoRecent: gogoRecentData, 
-                gogoPopular: gogoPopularData,
-            };
-
-            HOME_CACHE[cacheKey] = {
-                data: data,
-                expires: Date.now() + 10 * 60 * 1000,
-            };
-
-            const simplifiedData = {
-                trending: data.anilistTrending,
-                popular: { results: data.gogoPopular },
-                recent: { results: data.gogoRecent },
-                upcoming: data.anilistUpcoming
-            };
-
-            responseBody = JSON.stringify(simplifiedData);
-        }
-
-        // ------------------
-        // ROUTE: /search/{query} (FIXED: No-results error)
-        // ------------------
-        else if (path.startsWith("/search/")) {
-            const query = url.pathname.replace("/search/", "").trim().split("?")[0];
-            const page = parseInt(url.searchParams.get("page")) || 1;
-            const cacheKey = `/search/${query}/${page}`;
-
+            const cacheKey = `${query}_${page}`;
             if (SEARCH_CACHE[cacheKey] && SEARCH_CACHE[cacheKey].expires > Date.now()) {
                 responseBody = JSON.stringify(SEARCH_CACHE[cacheKey].data);
-                return;
+            } else {
+                const data = await getSearch(query, page);
+                SEARCH_CACHE[cacheKey] = {
+                    data: { results: data },
+                    expires: Date.now() + 30 * 60 * 1000,
+                };
+                responseBody = JSON.stringify({ results: data });
             }
+        } else if (path.startsWith("/anime/")) {
+            const animeid = decodeURIComponent(path.substring(7));
 
-            const data = await getSearch(query, page);
-            const searchResults = data.results || [];
-
-            // FIX: If no results found, return a successful status (200 OK) with empty array
-            if (searchResults.length === 0) {
-                statusCode = 200;
-                responseBody = JSON.stringify({ 
-                    results: { 
-                        results: [], 
-                        hasNextPage: false,
-                        message: `No results found for "${query}"` 
-                    } 
-                });
-                return;
-            } 
-
-            SEARCH_CACHE[cacheKey] = {
-                data: { results: data },
-                expires: Date.now() + 30 * 60 * 1000,
-            };
-            responseBody = JSON.stringify({ results: data });
-        }
-        
-        // ------------------
-        // ROUTE: /anime/{id}
-        // ------------------
-        else if (path.startsWith("/anime/")) {
-            const animeId = url.pathname.replace("/anime/", "").trim().split("?")[0];
-            const cacheKey = `/anime/${animeId}`;
-
-            if (ANIME_CACHE[cacheKey] && ANIME_CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify(ANIME_CACHE[cacheKey].data);
-                return;
+            if (ANIME_CACHE[animeid] && ANIME_CACHE[animeid].expires > Date.now()) {
+                responseBody = JSON.stringify(ANIME_CACHE[animeid].data);
+            } else {
+                try {
+                    const gogoData = await getAnime(animeid);
+                    
+                    const responseData = {
+                        results: {
+                            source: "gogoanime",
+                            name: gogoData.details.title,
+                            image: gogoData.details.image,
+                            plot_summary: gogoData.details.synopsis,
+                            other_name: gogoData.details.otherName,
+                            released: gogoData.details.release,
+                            status: gogoData.details.status,
+                            genre: gogoData.details.genres.join(", "),
+                            type: "TV",
+                            episodes: gogoData.episodes.map(ep => [ep.episode, ep.id])
+                        }
+                    };
+                    
+                    ANIME_CACHE[animeid] = {
+                        data: responseData,
+                        expires: Date.now() + 60 * 60 * 1000,
+                    };
+                    responseBody = JSON.stringify(responseData);
+                } catch (gogoError) {
+                    console.warn(`Gogo failed for ${animeid}, trying Anilist:`, gogoError.message);
+                    
+                    // Fallback to Anilist
+                    const anilistSearch = await getAnilistSearch(animeid);
+                    if (!anilistSearch.results || anilistSearch.results.length === 0) {
+                        throw new Error("Anime not found on GogoAnime or Anilist");
+                    }
+                    
+                    const anilistData = await getAnilistAnime(anilistSearch.results[0].id);
+                    
+                    const responseData = {
+                        results: {
+                            source: "anilist",
+                            ...anilistData
+                        }
+                    };
+                    
+                    ANIME_CACHE[animeid] = {
+                        data: responseData,
+                        expires: Date.now() + 60 * 60 * 1000,
+                    };
+                    responseBody = JSON.stringify(responseData);
+                }
             }
+        } else if (path.startsWith("/episode/")) {
+            const episodeId = decodeURIComponent(path.substring(9));
 
-            const data = await getAnime(animeId);
-            ANIME_CACHE[cacheKey] = {
-                data: { results: data },
-                expires: Date.now() + 30 * 60 * 1000,
-            };
-            responseBody = JSON.stringify({ results: data });
-        }
+            if (CACHE[episodeId] && CACHE[episodeId].expires > Date.now()) {
+                responseBody = JSON.stringify(CACHE[episodeId].data);
+            } else {
+                const episodeData = await getEpisode(episodeId);
+                
+                const responseData = {
+                    results: episodeData
+                };
+                
+                CACHE[episodeId] = {
+                    data: responseData,
+                    expires: Date.now() + 5 * 60 * 1000,
+                };
+                responseBody = JSON.stringify(responseData);
+            }
+        } else if (path.startsWith("/download/")) {
+            const episodeId = decodeURIComponent(path.substring(10));
 
-        // ------------------
-        // ROUTE: /episode/{id}
-        // ------------------
-        else if (path.startsWith("/episode/")) {
-            const episodeId = url.pathname.replace("/episode/", "").trim().split("?")[0];
-            const cacheKey = `/episode/${episodeId}`;
+            if (CACHE[`dl_${episodeId}`] && CACHE[`dl_${episodeId}`].expires > Date.now()) {
+                responseBody = JSON.stringify(CACHE[`dl_${episodeId}`].data);
+            } else {
+                const dlData = await GogoDLScrapper(episodeId);
+                
+                const responseData = {
+                    results: dlData
+                };
+                
+                CACHE[`dl_${episodeId}`] = {
+                    data: responseData,
+                    expires: Date.now() + 60 * 60 * 1000,
+                };
+                responseBody = JSON.stringify(responseData);
+            }
+        } else if (path.startsWith("/recent/")) {
+            const page = parseInt(path.substring(8)) || 1;
 
+            if (RECENT_CACHE[page] && RECENT_CACHE[page].expires > Date.now()) {
+                responseBody = JSON.stringify(RECENT_CACHE[page].data);
+            } else {
+                const data = await getRecentAnime(page);
+                RECENT_CACHE[page] = {
+                    data: { results: data },
+                    expires: Date.now() + 15 * 60 * 1000,
+                };
+                responseBody = JSON.stringify({ results: data });
+            }
+        } else if (path.startsWith("/recommendations/")) {
+            const query = decodeURIComponent(path.substring(17));
+
+            if (REC_CACHE[query] && REC_CACHE[query].expires > Date.now()) {
+                responseBody = JSON.stringify(REC_CACHE[query].data);
+            } else {
+                const searchResult = await getAnilistSearch(query);
+                if (!searchResult.results || searchResult.results.length === 0) {
+                    throw new Error("Anime not found on Anilist for recommendations.");
+                }
+                
+                const animeData = await getAnilistAnime(searchResult.results[0].id);
+                const recommendations = animeData.recommendations || [];
+                
+                REC_CACHE[query] = {
+                    data: { results: recommendations },
+                    expires: Date.now() + 60 * 60 * 1000,
+                };
+                responseBody = JSON.stringify({ results: recommendations });
+            }
+        } else if (path.startsWith("/gogoPopular/")) {
+            const page = parseInt(path.substring(13)) || 1;
+
+            if (GP_CACHE[page] && GP_CACHE[page].expires > Date.now()) {
+                responseBody = JSON.stringify(GP_CACHE[page].data);
+            } else {
+                const data = await getPopularAnime(page);
+                GP_CACHE[page] = {
+                    data: { results: data },
+                    expires: Date.now() + 15 * 60 * 1000,
+                };
+                responseBody = JSON.stringify({ results: data });
+            }
+        } else if (path.startsWith("/trending/")) {
+            const page = parseInt(path.substring(10)) || 1;
+
+            if (AT_CACHE[page] && AT_CACHE[page].expires > Date.now()) {
+                responseBody = JSON.stringify(AT_CACHE[page].data);
+            } else {
+                const data = await getAnilistTrending(page, 20);
+                const responseData = {
+                    results: {
+                        trending: data.media || []
+                    }
+                };
+                
+                AT_CACHE[page] = {
+                    data: responseData,
+                    expires: Date.now() + 60 * 60 * 1000,
+                };
+                responseBody = JSON.stringify(responseData);
+            }
+        } else if (path.startsWith("/upcoming/")) {
+            const page = parseInt(path.substring(10)) || 1;
+
+            const cacheKey = `upcoming_${page}`;
             if (CACHE[cacheKey] && CACHE[cacheKey].expires > Date.now()) {
                 responseBody = JSON.stringify(CACHE[cacheKey].data);
-                return;
+            } else {
+                const data = await getAnilistUpcoming(page, 20);
+                const responseData = {
+                    results: {
+                        upcoming: data.media || []
+                    }
+                };
+                
+                CACHE[cacheKey] = {
+                    data: responseData,
+                    expires: Date.now() + 24 * 60 * 60 * 1000,
+                };
+                responseBody = JSON.stringify(responseData);
             }
-
-            const data = await getEpisode(episodeId);
-            CACHE[cacheKey] = {
-                data: { results: data },
-                expires: Date.now() + 30 * 60 * 1000,
-            };
-            responseBody = JSON.stringify({ results: data });
-        }
-        
-        // ------------------
-        // ROUTE: /recent/{page}
-        // ------------------
-        else if (path.startsWith("/recent/")) {
-            const page = parseInt(url.pathname.replace("/recent/", "").trim()) || 1;
-            const cacheKey = `/recent/${page}`;
-
-            if (RECENT_CACHE[cacheKey] && RECENT_CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify(RECENT_CACHE[cacheKey].data);
-                return;
-            }
-
-            const data = await getRecentAnime(page);
-            RECENT_CACHE[cacheKey] = {
-                data: data,
-                expires: Date.now() + 10 * 60 * 1000,
-            };
-            responseBody = JSON.stringify(data);
-        }
-        
-        // ------------------
-        // ROUTE: /popular/{page}
-        // ------------------
-        else if (path.startsWith("/popular/")) {
-            const page = parseInt(url.pathname.replace("/popular/", "").trim()) || 1;
-            const cacheKey = `/popular/${page}`;
-
-            if (GP_CACHE[cacheKey] && GP_CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify(GP_CACHE[cacheKey].data);
-                return;
-            }
-
-            const data = await getPopularAnime(page);
-            GP_CACHE[cacheKey] = {
-                data: data,
-                expires: Date.now() + 10 * 60 * 1000,
-            };
-            responseBody = JSON.stringify(data);
-        }
-
-        // ------------------
-        // ROUTE: /trending
-        // ------------------
-        else if (path === "/trending") {
-            const cacheKey = "/trending";
-
-            if (AT_CACHE[cacheKey] && AT_CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify(AT_CACHE[cacheKey].data);
-                return;
-            }
-
-            const data = await getAnilistTrending(1, 20);
-            AT_CACHE[cacheKey] = {
-                data: data,
-                expires: Date.now() + 60 * 60 * 1000,
-            };
-            responseBody = JSON.stringify(data);
-        }
-
-        // ------------------
-        // ROUTE: /download/{id}
-        // ------------------
-        else if (path.startsWith("/download/")) {
-            const animeId = url.pathname.replace("/download/", "").trim().split("?")[0];
-            const data = await GogoDLScrapper(animeId);
-            responseBody = JSON.stringify({ results: data });
-        }
-        
-        // ------------------
-        // ROUTE: /authkey
-        // ------------------
-        else if (path === "/authkey") {
-            const data = await getGogoAuthKey();
-            responseBody = JSON.stringify({ key: data });
-        }
-
-        // ------------------
-        // ROUTE: /anilist/search/{query}
-        // ------------------
-        else if (path.startsWith("/anilist/search/")) {
-            const query = url.pathname.replace("/anilist/search/", "").trim().split("?")[0];
-            const data = await getAnilistSearch(query);
-            responseBody = JSON.stringify(data);
-        }
-        
-        // ------------------
-        // ROUTE: /anilist/anime/{id}
-        // ------------------
-        else if (path.startsWith("/anilist/anime/")) {
-            const id = parseInt(url.pathname.replace("/anilist/anime/", "").trim().split("?")[0]);
-            const data = await getAnilistAnime(id);
-            responseBody = JSON.stringify({ results: data });
-        }
-
-        // ------------------
-        // ROUTE: /recommendations/{query}
-        // ------------------
-        else if (path.startsWith("/recommendations/")) {
-            const query = url.pathname.replace("/recommendations/", "").trim().split("?")[0];
-            const cacheKey = `/recommendations/${query}`;
-
-            if (REC_CACHE[cacheKey] && REC_CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify(REC_CACHE[cacheKey].data);
-                return;
-            }
-
-            const data = await getAnilistSearch(query);
-            REC_CACHE[cacheKey] = {
-                data: data,
-                expires: Date.now() + 60 * 60 * 1000,
-            };
-            responseBody = JSON.stringify(data);
-        }
-        
-        // ------------------
-        // ROUTE: /
-        // ------------------
-        else if (path === "/") {
+        } else if (path === "/authkey") {
+            const authKey = await getGogoAuthKey();
+            responseBody = JSON.stringify({ authKey: authKey });
+        } else if (path === "/") {
             contentType = "text/html";
-            responseBody = `
-<!DOCTYPE html>
+            responseBody = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Beat Animes API</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #282828; color: #fff; }
-        .container { max-width: 900px; margin: 50px auto; padding: 20px; background-color: #1f1f1f; border-radius: 8px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5); }
-        h1 { color: #eb3349; border-bottom: 2px solid #eb3349; padding-bottom: 10px; }
-        h2 { color: #f45c43; margin-top: 30px; }
-        .endpoint { background-color: #333; padding: 10px 15px; border-radius: 4px; margin-bottom: 10px; font-family: 'Consolas', 'Courier New', monospace; }
-        .endpoint a { color: #fff; text-decoration: none; word-wrap: break-word; }
-        .endpoint:hover { background-color: #444; }
-        .endpoints { margin-bottom: 20px; }
-        .test-link { display: inline-block; background-color: #666; color: white; padding: 5px 10px; margin-right: 10px; margin-top: 5px; border-radius: 4px; text-decoration: none; }
-        .test-link:hover { background-color: #888; }
-        footer { margin-top: 40px; border-top: 1px solid #444; padding-top: 20px; text-align: center; font-size: 0.9em; }
-        footer p { margin: 5px 0; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; border-radius: 20px; padding: 40px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        h1 { color: #667eea; font-size: 2.5rem; margin-bottom: 10px; text-align: center; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 30px; font-size: 1.1rem; }
+        .status { background: #10b981; color: white; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; margin-bottom: 30px; }
+        .endpoints { background: #f8f9fa; padding: 25px; border-radius: 15px; margin-bottom: 25px; }
+        .endpoints h2 { color: #333; margin-bottom: 20px; font-size: 1.5rem; }
+        .endpoint { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; border-left: 4px solid #667eea; font-family: monospace; }
+        .endpoint:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); transform: translateX(5px); transition: all 0.3s; }
+        .test-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
+        .test-link { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 10px; text-decoration: none; text-align: center; font-weight: bold; transition: transform 0.2s; }
+        .test-link:hover { transform: scale(1.05); }
+        footer { text-align: center; margin-top: 30px; color: #666; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Beat Animes API - v1.0.0</h1>
-        <p>A fast, cached, and reliable API for Anime data, powered by Gogoanime and Anilist.</p>
-
-        <div class="endpoints">
-            <h2>Core Endpoints</h2>
-            <div class="endpoint">GET /ping - Check API status</div>
-            <div class="endpoint">GET /home - Get trending, popular, recent, and upcoming anime</div>
-            <div class="endpoint">GET /search/{query}?page={number} - Search for anime</div>
-            <div class="endpoint">GET /anime/{id} - Get anime details (episodes, summary, etc.)</div>
-            <div class="endpoint">GET /episode/{id} - Get video links for an episode</div>
-        </div>
+        <h1>🎬 Beat Animes API</h1>
+        <p class="subtitle">High-performance anime streaming data API</p>
+        <div class="status">✅ API is Online and Running</div>
         
         <div class="endpoints">
-            <h2>Gogoanime Endpoints</h2>
-            <div class="endpoint">GET /recent/{page} - Get recent releases</div>
-            <div class="endpoint">GET /popular/{page} - Get most popular anime</div>
-            <div class="endpoint">GET /download/{id} - Get direct download links for an episode</div>
-            <div class="endpoint">GET /authkey - Download auth key</div>
-        </div>
-
-        <div class="endpoints">
-            <h2>Anilist Endpoints</h2>
-            <div class="endpoint">GET /trending - Get Anilist's global trending list</div>
-            <div class="endpoint">GET /anilist/search/{query} - Search Anilist for titles</div>
-            <div class="endpoint">GET /anilist/anime/{id} - Get detailed Anilist data for an anime</div>
+            <h2>📡 Available Endpoints</h2>
+            <div class="endpoint">GET /ping - Health check</div>
+            <div class="endpoint">GET /home - Homepage data (Trending, Popular, Recent)</div>
+            <div class="endpoint">GET /search/{query}?page={page} - Search anime</div>
+            <div class="endpoint">GET /anime/{id} - Anime details & episodes</div>
+            <div class="endpoint">GET /episode/{id} - Streaming URLs</div>
+            <div class="endpoint">GET /download/{id} - Download links</div>
+            <div class="endpoint">GET /recent/{page} - Recent releases</div>
+            <div class="endpoint">GET /gogoPopular/{page} - Popular anime</div>
+            <div class="endpoint">GET /trending/{page} - Trending from Anilist</div>
+            <div class="endpoint">GET /upcoming/{page} - Upcoming anime</div>
             <div class="endpoint">GET /recommendations/{query} - Get recommendations</div>
+            <div class="endpoint">GET /authkey - Download auth key</div>
         </div>
 
         <div class="endpoints">
@@ -369,14 +352,14 @@ http.createServer(async (req, res) => {
             <div class="test-links">
                 <a href="/ping" class="test-link">Test Ping</a>
                 <a href="/home" class="test-link">Test Home</a>
-                <a href="/search/naruto" class="test-link">Test Search (Naruto)</a>
+                <a href="/search/naruto" class="test-link">Test Search</a>
                 <a href="/recent/1" class="test-link">Test Recent</a>
             </div>
         </div>
 
         <footer>
             <p>Made with ❤️ by Beat Anime Team</p>
-            <p>© 2025 Beat Animes API - All Rights Reserved</p>
+            <p>© 2024 Beat Animes API - All Rights Reserved</p>
         </footer>
     </div>
 </body>
@@ -403,5 +386,5 @@ http.createServer(async (req, res) => {
     });
     res.end(responseBody);
 }).listen(PORT, () => {
-    console.log(`\n✅ API is listening on port ${PORT}`);
+    console.log(`✅ Server running at http://localhost:${PORT}`);
 });
