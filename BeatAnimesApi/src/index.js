@@ -61,7 +61,7 @@ http.createServer(async (req, res) => {
                 status: "ok",
                 timestamp: new Date().toISOString(),
             });
-        } async function initializePage() {
+        } else if async function initializePage() {
             try {
                 console.log("🚀 Starting BeatAnimes...");
                 document.getElementById("load").style.display = "block";
@@ -119,6 +119,7 @@ http.createServer(async (req, res) => {
                    </div>
               `;
             }
+            
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
             const page = parseInt(searchParams.get("page")) || 1;
@@ -400,4 +401,5 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
 
