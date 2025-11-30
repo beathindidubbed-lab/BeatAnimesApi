@@ -64,27 +64,45 @@ http.createServer(async (req, res) => {
                 status: "ok",
                 timestamp: new Date().toISOString(),
             });
-        } else if (path === "/home") { // <-- CORRECTED: Added the missing /home endpoint
-            const cacheKey = "home";
-            if (HOME_CACHE[cacheKey] && HOME_CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify(HOME_CACHE[cacheKey].data);
+        // ✅ FIXED /home endpoint - put this in your index.js
+        } else if (path === "/home") {
+            if (HOME_CACHE.data && HOME_CACHE.expires > Date.now()) {
+                responseBody = JSON.stringify(HOME_CACHE.data);
             } else {
-                const homeData = await getHome();
-                
-                // Fetch trending data to combine into the home response
-                const trendingData = await getAnilistTrending(1, 20);
-                
-                const responseData = {
-                    popular: homeData.popular || [],
-                    recent: homeData.recent || [],
-                    trending: trendingData.media || [], // Use Anilist trending for better data
-                };
-                
-                HOME_CACHE[cacheKey] = {
-                    data: responseData,
-                    expires: Date.now() + 15 * 60 * 1000, // 15 minutes cache
-                };
-                responseBody = JSON.stringify(responseData);
+                try {
+                    console.log("📡 Fetching home data...");
+                    
+                    // Fetch from GogoAnime
+                    const gogoHome = await getHome();
+                    
+                    console.log(`✅ GoGo: ${gogoHome.recent.length} recent, ${gogoHome.trending.length} popular`);
+
+                    // Structure response to match frontend expectations
+                    const homeData = {
+                        results: {
+                            popular: gogoHome.trending,   // Array for banner & popular section
+                            recent: gogoHome.recent        // Array for recent section
+                        }
+                    };
+
+                    HOME_CACHE = {
+                        data: homeData,
+                        expires: Date.now() + 30 * 60 * 1000,
+                    };
+                    
+                    responseBody = JSON.stringify(homeData);
+                    
+                } catch (error) {
+                    console.error("❌ Home API error:", error.message);
+                    
+                    // Return cached data if available
+                    if (HOME_CACHE.data) {
+                        console.warn("⚠️ Using expired cache");
+                        responseBody = JSON.stringify(HOME_CACHE.data);
+                    } else {
+                        throw error;
+                    }
+                }
             }
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
@@ -372,3 +390,4 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
