@@ -141,7 +141,7 @@ async function getSearch(query, page = 1) {
     }
 }
 
-// ✅ FIXED: Proper anime detail extraction
+// ✅ COMPLETELY REWRITTEN: Proper anime detail extraction
 async function getAnime(animeId) {
     try {
         const response = await fetchWithFallback(`/category/${animeId}`);
@@ -156,7 +156,8 @@ async function getAnime(animeId) {
             genres: [],
             release: "Unknown",
             status: "Unknown",
-            otherName: "N/A"
+            otherName: "N/A",
+            type: "TV"
         };
 
         // Extract details from p.type elements
@@ -177,23 +178,36 @@ async function getAnime(animeId) {
                 details.status = text.replace("Status:", "").trim();
             } else if (text.includes("Other name:")) {
                 details.otherName = text.replace("Other name:", "").trim();
+            } else if (text.includes("Type:")) {
+                const typeText = $el.find("a").text().trim();
+                if (typeText) details.type = typeText;
             }
         });
 
-        // ✅ Get episode list properly
+        // ✅ FIXED: Get episode list using the AJAX endpoint
         const movieId = $("#movie_id").attr("value");
         const alias = $("#alias_anime").attr("value") || animeId;
         
         let episodes = [];
+        
         if (movieId) {
-            const epStart = $("#episode_page li").first().find("a").attr("ep_start") || "0";
-            const epEnd = $("#episode_page li").last().find("a").attr("ep_end") || "0";
+            // Get episode range from pagination
+            const firstEp = $("#episode_page li").first().find("a");
+            const lastEp = $("#episode_page li").last().find("a");
             
-            console.log(`[GOGO] ${animeId}: Getting episodes ${epStart}-${epEnd}, movieId=${movieId}`);
-            episodes = await getEpisodeList(epStart, epEnd, movieId, alias);
+            const epStart = firstEp.attr("ep_start") || "0";
+            const epEnd = lastEp.attr("ep_end") || "0";
+            
+            console.log(`[GOGO] ${animeId}: movieId=${movieId}, alias=${alias}, episodes ${epStart}-${epEnd}`);
+            
+            if (epEnd !== "0") {
+                episodes = await getEpisodeList(epStart, epEnd, movieId, alias, animeId);
+            }
+        } else {
+            console.warn(`[GOGO] ${animeId}: No movie_id found, cannot fetch episodes`);
         }
 
-        console.log(`[GOGO] ${animeId}: Found ${episodes.length} episodes`);
+        console.log(`[GOGO] ${animeId}: Returning ${episodes.length} episodes`);
         return { details, episodes };
     } catch (e) {
         console.error("getAnime error:", e.message);
@@ -201,46 +215,102 @@ async function getAnime(animeId) {
     }
 }
 
-// ✅ FIXED: Episode list fetching
-async function getEpisodeList(epStart, epEnd, movieId, alias) {
+// ✅ COMPLETELY REWRITTEN: Proper episode list extraction
+async function getEpisodeList(epStart, epEnd, movieId, alias, animeId) {
     try {
-        const url = `${BaseURL}/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${movieId}&default_ep=0&alias=${alias}`;
+        // Build the correct AJAX URL
+        const ajaxUrl = `${BaseURL}/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${movieId}&default_ep=0&alias=${alias}`;
         
-        console.log(`[GOGO] Fetching episode list: ${url}`);
+        console.log(`[GOGO] Fetching episodes from: ${ajaxUrl}`);
         
-        const response = await fetch(url, {
+        const response = await fetch(ajaxUrl, {
             headers: {
                 "User-Agent": USER_AGENT,
                 "X-Requested-With": "XMLHttpRequest",
-                "Referer": BaseURL
+                "Referer": `${BaseURL}/category/${animeId}`
             }
         });
         
+        if (!response.ok) {
+            throw new Error(`AJAX request failed: ${response.status}`);
+        }
+        
         const html = await response.text();
+        
+        // Debug: log first 200 chars
+        console.log(`[GOGO] AJAX Response preview: ${html.substring(0, 200)}...`);
+        
         const $ = load(html);
-
         const episodes = [];
-        $("#episode_related li").each((i, el) => {
+        
+        // ✅ GoGoAnime returns <li> elements with <a> tags inside
+        // The structure is: <ul id="episode_related"><li><a href="/anime-episode-X">...</a></li></ul>
+        
+        // Try primary selector
+        $("#episode_related li a").each((i, el) => {
             const $el = $(el);
-            const linkEl = $el.find("a");
-            const href = linkEl.attr("href");
+            const href = $el.attr("href");
             
-            if (href) {
+            if (href && href.includes("-episode-")) {
                 const episodeId = href.trim().replace(/^\//, "");
-                const epNum = $el.find(".name").text().replace("EP", "").trim() || (i + 1);
+                const epNum = episodeId.split("-episode-")[1] || (i + 1);
                 
                 episodes.push({
                     id: episodeId,
-                    episode: epNum.toString(),
-                    title: `Episode ${epNum}`
+                    episode: epNum.toString().replace(/[^0-9.]/g, ""),
+                    title: $el.find(".name").text().trim() || `Episode ${epNum}`
                 });
             }
         });
+        
+        // Fallback: try without ID
+        if (episodes.length === 0) {
+            console.log(`[GOGO] Primary selector failed, trying fallback...`);
+            
+            $("li a").each((i, el) => {
+                const $el = $(el);
+                const href = $el.attr("href");
+                
+                if (href && href.includes("-episode-")) {
+                    const episodeId = href.trim().replace(/^\//, "");
+                    const epNum = episodeId.split("-episode-")[1] || (i + 1);
+                    
+                    episodes.push({
+                        id: episodeId,
+                        episode: epNum.toString().replace(/[^0-9.]/g, ""),
+                        title: `Episode ${epNum}`
+                    });
+                }
+            });
+        }
+        
+        // If still no episodes, try just <a> tags
+        if (episodes.length === 0) {
+            console.log(`[GOGO] Fallback also failed, trying all <a> tags...`);
+            
+            $("a").each((i, el) => {
+                const $el = $(el);
+                const href = $el.attr("href");
+                
+                if (href && href.includes("-episode-")) {
+                    const episodeId = href.trim().replace(/^\//, "");
+                    const epNum = episodeId.split("-episode-")[1] || (i + 1);
+                    
+                    episodes.push({
+                        id: episodeId,
+                        episode: epNum.toString().replace(/[^0-9.]/g, ""),
+                        title: `Episode ${epNum}`
+                    });
+                }
+            });
+        }
 
-        console.log(`[GOGO] Episode list returned ${episodes.length} episodes`);
+        console.log(`[GOGO] Extracted ${episodes.length} episodes`);
+        
+        // Return in correct order (episode 1 first)
         return episodes.reverse();
     } catch (e) {
-        console.error("getEpisodeList error:", e.message);
+        console.error(`[GOGO] getEpisodeList error: ${e.message}`);
         return [];
     }
 }
