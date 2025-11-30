@@ -6,8 +6,61 @@ function anilistTrendingQuery(page = 1, perPage = 10, type = "ANIME") {
     return `query ($page: Int = ${page}, $id: Int, $type: MediaType = ${type}, $isAdult: Boolean = false, $size: Int = ${perPage}, $sort: [MediaSort] = [TRENDING_DESC, POPULARITY_DESC]) { Page(page: $page, perPage: $size) { pageInfo { total perPage currentPage lastPage hasNextPage } media(id: $id, type: $type, isAdult: $isAdult, sort: $sort) { id status(version: 2) title { userPreferred romaji english native } genres description format bannerImage coverImage{ extraLarge large medium color } episodes meanScore season seasonYear averageScore } } }`;
 }
 
+// ✅ FIXED: Corrected GraphQL query for media details
 function anilistMediaDetailQuery(id) {
-    return `query ($id: Int = ${id}) { Media(id: $id) { id status(version: 2) title { userPreferred romaji english native } bannerImage popularity coverImage{ extraLarge large medium color } episodes format season description seasonYear averageScore genres recommendations { edges { node { id status(version: 2) title { userPreferred romaji english native } coverImage{ extraLarge large medium color } } } } } }`;
+    return `query ($id: Int = ${id}) { 
+        Media(id: $id) { 
+            id 
+            status(version: 2) 
+            title { 
+                userPreferred 
+                romaji 
+                english 
+                native 
+            } 
+            bannerImage 
+            popularity 
+            coverImage { 
+                extraLarge 
+                large 
+                medium 
+                color 
+            } 
+            episodes 
+            format 
+            season 
+            description 
+            seasonYear 
+            averageScore 
+            genres 
+            recommendations { 
+                edges { 
+                    node { 
+                        mediaRecommendation {
+                            id 
+                            status(version: 2) 
+                            title { 
+                                userPreferred 
+                                romaji 
+                                english 
+                                native 
+                            } 
+                            coverImage { 
+                                extraLarge 
+                                large 
+                                medium 
+                                color 
+                            }
+                            format
+                            episodes
+                            averageScore
+                            meanScore
+                        }
+                    } 
+                } 
+            } 
+        } 
+    }`;
 }
 
 function anilistUpcomingQuery(page = 1, perPage = 10, type = "ANIME") {
@@ -15,13 +68,11 @@ function anilistUpcomingQuery(page = 1, perPage = 10, type = "ANIME") {
     return `query ($page: Int = ${page}, $id: Int, $type: MediaType = ${type}, $isAdult: Boolean = false, $size: Int = ${perPage}, $sort: [MediaSort] = [POPULARITY_DESC], $season: MediaSeason = WINTER) { Page(page: $page, perPage: $size) { pageInfo { total perPage currentPage lastPage hasNextPage } media(id: $id, type: $type, isAdult: $isAdult, sort: $sort, season: $season, seasonYear: ${year}) { id status(version: 2) title { userPreferred romaji english native } genres description format bannerImage coverImage{ extraLarge large medium color } episodes meanScore season seasonYear averageScore } } }`;
 }
 
-// Function to determine the current or next season (used for Upcoming)
 function getCurrentSeason() {
     const month = new Date().getMonth();
     if (month >= 2 && month <= 4) return "SPRING";
     if (month >= 5 && month <= 7) return "SUMMER";
     if (month >= 8 && month <= 10) return "FALL";
-    // December, January, February
     return "WINTER";
 }
 
@@ -34,17 +85,14 @@ async function getAnilistTrending(page = 1, perPage = 10) {
             "Content-Type": "application/json",
             Accept: "application/json",
         },
-        body: JSON.stringify({
-            query: query,
-        }),
+        body: JSON.stringify({ query: query }),
     };
     const res = await fetch(url, options);
     const data = await res.json();
     
-    // FIX: Add check for data existence to prevent 'Cannot read properties of null (reading 'Page')'
     if (!data || !data.data || !data.data.Page) {
         console.error("Anilist Trending Fetch Failed:", data?.errors || "Unknown Error");
-        return { pageInfo: {}, media: [] }; // Return empty structure on failure
+        return { pageInfo: {}, media: [] };
     }
 
     return data["data"]["Page"];
@@ -52,24 +100,21 @@ async function getAnilistTrending(page = 1, perPage = 10) {
 
 async function getAnilistUpcoming(page = 1, perPage = 10) {
     const url = "https://graphql.anilist.co";
-    const query = anilistUpcomingQuery(page, perPage).replace("WINTER", getCurrentSeason()); // Use dynamic season
+    const query = anilistUpcomingQuery(page, perPage).replace("WINTER", getCurrentSeason());
     const options = {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
         },
-        body: JSON.stringify({
-            query: query,
-        }),
+        body: JSON.stringify({ query: query }),
     };
     const res = await fetch(url, options);
     const data = await res.json();
     
-    // FIX: Add check for data existence to prevent 'Cannot read properties of null (reading 'Page')'
     if (!data || !data.data || !data.data.Page) {
         console.error("Anilist Upcoming Fetch Failed:", data?.errors || "Unknown Error");
-        return { pageInfo: {}, media: [] }; // Return empty structure on failure
+        return { pageInfo: {}, media: [] };
     }
 
     return data["data"]["Page"];
@@ -84,22 +129,17 @@ async function getAnilistSearch(query) {
             "Content-Type": "application/json",
             Accept: "application/json",
         },
-        body: JSON.stringify({
-            query: query,
-        }),
+        body: JSON.stringify({ query: query }),
     };
     const res = await fetch(url, options);
     let data = await res.json();
     
-    // Add check for search data existence
     if (!data || !data.data || !data.data.Page) {
         console.error("Anilist Search Fetch Failed:", data?.errors || "Unknown Error");
         return { results: [] };
     }
     
-    data = {
-        results: data["data"]["Page"]["media"],
-    };
+    data = { results: data["data"]["Page"]["media"] };
     return data;
 }
 
@@ -114,25 +154,25 @@ async function getAnilistAnime(id) {
             "Content-Type": "application/json",
             Accept: "application/json",
         },
-        body: JSON.stringify({
-            query: query,
-        }),
+        body: JSON.stringify({ query: query }),
     };
     const res = await fetch(url, options);
     let data = await res.json();
     
-    // Add check for detail data existence
     if (!data || !data.data || !data.data.Media) {
         console.error("Anilist Media Detail Fetch Failed:", data?.errors || "Unknown Error");
         throw new Error("Failed to fetch anime details from Anilist.");
     }
     
     let results = data["data"]["Media"];
-    results["recommendations"] = results["recommendations"]["edges"];
-
-    for (let i = 0; i < results["recommendations"].length; i++) {
-        results["recommendations"][i] =
-            results["recommendations"][i]["node"];
+    
+    // ✅ FIXED: Proper extraction of recommendations
+    if (results["recommendations"] && results["recommendations"]["edges"]) {
+        results["recommendations"] = results["recommendations"]["edges"]
+            .map(edge => edge.node?.mediaRecommendation)
+            .filter(rec => rec !== null && rec !== undefined);
+    } else {
+        results["recommendations"] = [];
     }
 
     return results;
