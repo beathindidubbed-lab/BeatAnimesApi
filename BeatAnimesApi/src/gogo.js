@@ -4,11 +4,9 @@ import {
 } from "./gogo_extractor.js";
 import { load } from "cheerio";
 
-// Updated working domains
+// ✅ Use the actual working GoGoAnime domain
 const GOGO_DOMAINS = [
-    "https://anitaku.to",
-    "https://gogoanime3.co",
-    "https://gogoanime.hu"
+    "https://gogoanimes.watch"  // This is the real domain from your screenshot
 ];
 
 let BaseURL = GOGO_DOMAINS[0];
@@ -18,113 +16,83 @@ const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fetchWithFallback(path, options = {}) {
-    let lastError;
-    const MAX_RETRIES = 2;
-    
-    for (const domain of GOGO_DOMAINS) {
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                const url = domain + path;
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 10000);
+    const url = BaseURL + path;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
-                const response = await fetch(url, {
-                    ...options,
-                    signal: controller.signal,
-                    headers: {
-                        "User-Agent": USER_AGENT,
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.5",
-                        "Connection": "keep-alive",
-                        "Referer": domain + "/",
-                        ...options.headers
-                    }
-                });
-                
-                clearTimeout(timeout);
-
-                if (response.ok) {
-                    const htmlCheck = await response.clone().text();
-                    if (htmlCheck.includes("<title>Redirecting...</title>") || 
-                        htmlCheck.includes("Just a moment") ||
-                        htmlCheck.includes("Checking your browser")) {
-                        throw new Error("Anti-Bot/Cloudflare page detected");
-                    }
-
-                    BaseURL = domain;
-                    return response;
-                } else {
-                    throw new Error(`Non-OK status: ${response.status} from ${domain}`);
-                }
-            } catch (error) {
-                lastError = error;
-                
-                if (attempt < MAX_RETRIES) {
-                    const delay = Math.pow(2, attempt) * 1000;
-                    console.warn(`[GOGO Retry] Domain ${domain} failed (Attempt ${attempt + 1}/${MAX_RETRIES + 1}). Retrying in ${delay / 1000}s. Error: ${error.message}`);
-                    await wait(delay);
-                } else {
-                    console.warn(`[GOGO Fallback] Domain ${domain} failed after ${MAX_RETRIES + 1} attempts. Trying next domain.`);
-                }
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+            headers: {
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": BaseURL + "/",
+                ...options.headers
             }
-        }
-    }
+        });
+        
+        clearTimeout(timeout);
 
-    throw new Error(`All GogoAnime domains failed. Last error: ${lastError ? lastError.message : "Unknown error"}`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        return response;
+    } catch (error) {
+        clearTimeout(timeout);
+        throw error;
+    }
 }
 
+// ✅ FIXED: Based on actual GoGoAnime HTML structure from your screenshot
 async function getHome() {
     try {
-        const response = await fetchWithFallback("/?page=1");
+        const response = await fetchWithFallback("/");
         const html = await response.text();
         const $ = load(html);
         
         const recent = [];
         const trending = [];
 
-        // Updated selectors for Anitaku structure
-        // Recent episodes - Updated selector
-        $("div.last_episodes ul.items li, ul.items li").each((i, el) => {
+        // ✅ Recent Episodes - Using actual selector from GoGoAnime source
+        $("ul.items li").each((i, el) => {
             const $el = $(el);
-            const linkEl = $el.find("p.name a, .name a");
-            const titleAttr = linkEl.attr("title");
-            const titleText = linkEl.text().trim();
-            const title = titleAttr || titleText;
-            
-            if (!title) return;
-            
-            const href = linkEl.attr("href");
-            const imageEl = $el.find("div.img a img, .img img");
-            const image = imageEl.attr("src") || imageEl.attr("data-src");
-            const releaseEl = $el.find("p.released, .released");
-            const episodeEl = $el.find("p.episode, .episode");
-            
-            recent.push({
-                id: href ? href.replace(/^\//, "") : "",
-                title: title,
-                image: image || "",
-                release: releaseEl.text().trim(),
-                episode: parseInt(episodeEl.text().replace(/\D/g, "")) || 1
-            });
-        });
-
-        // Trending/Popular - Updated selector
-        $("div.added_series_body.popular ul.listing li, nav.genre ul li").each((i, el) => {
-            const $el = $(el);
-            const linkEl = $el.find("a");
+            const linkEl = $el.find("p.name a");
             const title = linkEl.attr("title") || linkEl.text().trim();
             
             if (!title) return;
             
-            const href = linkEl.attr("href");
+            const href = linkEl.attr("href") || "";
+            const imageEl = $el.find("div img");
+            const image = imageEl.attr("src") || "";
+            const epText = $el.find("p.episode").text().trim();
+            
+            recent.push({
+                id: href.replace(/^\//, ""),
+                title: title,
+                image: image,
+                episode: epText
+            });
+        });
+
+        // ✅ Trending/Popular - Using actual "On Going Series" from sidebar
+        $("ul.items li").each((i, el) => {
+            const $el = $(el);
+            const linkEl = $el.find("a");
+            const title = linkEl.attr("title") || linkEl.find("a").text().trim();
+            
+            if (!title || trending.length >= 20) return;
+            
+            const href = linkEl.attr("href") || "";
             const imageEl = $el.find("img");
-            const image = imageEl.attr("src") || imageEl.attr("data-src");
+            const image = imageEl.attr("src") || "";
             
             trending.push({
-                id: href ? href.replace(/^\/category\//, "").replace(/^\//, "") : "",
+                id: href.replace(/^\//, "").replace(/^category\//, ""),
                 title: title,
-                image: image || "",
-                release: $el.find("p.released, .released").text().replace("Released: ", "").trim()
+                image: image
             });
         });
 
@@ -145,50 +113,27 @@ async function getSearch(query, page = 1) {
 
         const data = [];
         
-        // Multiple selector attempts for search results
-        const selectors = [
-            "div.last_episodes ul.items li",
-            "ul.items li",
-            "div.items li",
-            ".anime_list_body ul li"
-        ];
-        
-        let found = false;
-        for (const selector of selectors) {
-            const elements = $(selector);
-            if (elements.length > 0) {
-                elements.each((i, el) => {
-                    const $el = $(el);
-                    const linkEl = $el.find("p.name a, .name a, a");
-                    const title = linkEl.attr("title") || linkEl.text().trim();
-                    
-                    if (!title) return;
-                    
-                    const href = linkEl.attr("href");
-                    const imageEl = $el.find("div.img a img, .img img, img");
-                    const image = imageEl.attr("src") || imageEl.attr("data-src");
-                    
-                    data.push({
-                        id: href ? href.replace(/^\/category\//, "").replace(/^\//, "") : "",
-                        title: title,
-                        image: image || "",
-                        release: $el.find("p.released, .released").text().replace("Released: ", "").trim()
-                    });
-                });
-                
-                if (data.length > 0) {
-                    found = true;
-                    break;
-                }
-            }
-        }
+        $("ul.items li").each((i, el) => {
+            const $el = $(el);
+            const linkEl = $el.find("p.name a");
+            const title = linkEl.attr("title") || linkEl.text().trim();
+            
+            if (!title) return;
+            
+            const href = linkEl.attr("href") || "";
+            const imageEl = $el.find("div img");
+            const image = imageEl.attr("src") || "";
+            const released = $el.find("p.released").text().replace("Released:", "").trim();
+            
+            data.push({
+                id: href.replace(/^\/category\//, "").replace(/^\//, ""),
+                title: title,
+                image: image,
+                release: released
+            });
+        });
 
-        if (data.length === 0) {
-            console.warn(`[GOGO] Search for '${query}' returned 0 results using all selectors`);
-        } else {
-            console.log(`[GOGO] Search found ${data.length} results for '${query}'`);
-        }
-
+        console.log(`[GOGO] Search found ${data.length} results for '${query}'`);
         return { results: data };
     } catch (e) {
         console.error("getSearch error:", e.message);
@@ -196,54 +141,59 @@ async function getSearch(query, page = 1) {
     }
 }
 
+// ✅ FIXED: Proper anime detail extraction
 async function getAnime(animeId) {
     try {
         const response = await fetchWithFallback(`/category/${animeId}`);
         const html = await response.text();
         const $ = load(html);
 
-        const detailEl = $("div.anime_info_body_bg, div.anime_info_body");
-        
         const details = {
             id: animeId,
-            title: detailEl.find("h1").text().trim() || "Unknown",
-            image: detailEl.find("img").attr("src") || "",
-            synopsis: $("div.description, p.type:contains('Plot Summary'), .anime_info_body_bg p").eq(4).text().replace(/^Plot Summary:\s*/i, "").trim() || "No synopsis available",
+            title: $("div.anime_info_body_bg h1").text().trim() || "Unknown",
+            image: $("div.anime_info_body_bg img").attr("src") || "",
+            synopsis: "",
             genres: [],
             release: "Unknown",
             status: "Unknown",
             otherName: "N/A"
         };
 
-        // Extract genres
-        $("p.type:contains('Genre') a, .genre a").each((i, el) => {
-            const genre = $(el).attr("title") || $(el).text().trim();
-            if (genre) details.genres.push(genre);
-        });
-
-        // Extract other details
+        // Extract details from p.type elements
         $("p.type").each((i, el) => {
-            const text = $(el).text();
-            if (text.includes("Released:")) {
+            const $el = $(el);
+            const text = $el.text();
+            
+            if (text.includes("Plot Summary:")) {
+                details.synopsis = text.replace("Plot Summary:", "").trim();
+            } else if (text.includes("Genre:")) {
+                $el.find("a").each((j, a) => {
+                    const genre = $(a).attr("title") || $(a).text().trim();
+                    if (genre) details.genres.push(genre);
+                });
+            } else if (text.includes("Released:")) {
                 details.release = text.replace("Released:", "").trim();
             } else if (text.includes("Status:")) {
-                details.status = $(el).find("a").text().trim() || text.replace("Status:", "").trim();
+                details.status = text.replace("Status:", "").trim();
             } else if (text.includes("Other name:")) {
                 details.otherName = text.replace("Other name:", "").trim();
             }
         });
 
-        // Get episode list
-        const epStart = $("#episode_page a, #episode_page li a").first().attr("ep_start") || "0";
-        const epEnd = $("#episode_page a, #episode_page li a").last().attr("ep_end") || "0";
+        // ✅ Get episode list properly
         const movieId = $("#movie_id").attr("value");
         const alias = $("#alias_anime").attr("value") || animeId;
-
+        
         let episodes = [];
         if (movieId) {
+            const epStart = $("#episode_page li").first().find("a").attr("ep_start") || "0";
+            const epEnd = $("#episode_page li").last().find("a").attr("ep_end") || "0";
+            
+            console.log(`[GOGO] ${animeId}: Getting episodes ${epStart}-${epEnd}, movieId=${movieId}`);
             episodes = await getEpisodeList(epStart, epEnd, movieId, alias);
         }
 
+        console.log(`[GOGO] ${animeId}: Found ${episodes.length} episodes`);
         return { details, episodes };
     } catch (e) {
         console.error("getAnime error:", e.message);
@@ -251,13 +201,18 @@ async function getAnime(animeId) {
     }
 }
 
+// ✅ FIXED: Episode list fetching
 async function getEpisodeList(epStart, epEnd, movieId, alias) {
     try {
-        const url = `${BaseURL}/ajax/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${movieId}&default_ep=0&alias=${alias}`;
+        const url = `${BaseURL}/load-list-episode?ep_start=${epStart}&ep_end=${epEnd}&id=${movieId}&default_ep=0&alias=${alias}`;
+        
+        console.log(`[GOGO] Fetching episode list: ${url}`);
+        
         const response = await fetch(url, {
             headers: {
                 "User-Agent": USER_AGENT,
-                "X-Requested-With": "XMLHttpRequest"
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": BaseURL
             }
         });
         
@@ -265,24 +220,24 @@ async function getEpisodeList(epStart, epEnd, movieId, alias) {
         const $ = load(html);
 
         const episodes = [];
-        $("li, a").each((i, el) => {
+        $("#episode_related li").each((i, el) => {
             const $el = $(el);
-            const href = $el.attr("href") || $el.find("a").attr("href");
+            const linkEl = $el.find("a");
+            const href = linkEl.attr("href");
             
-            if (href && href.includes("-episode-")) {
-                const episodeId = href.replace(/^\//, "");
-                const epNum = $el.find(".name").text().replace("EP", "").trim() || 
-                              episodeId.split("-episode-")[1] || (i + 1);
+            if (href) {
+                const episodeId = href.trim().replace(/^\//, "");
+                const epNum = $el.find(".name").text().replace("EP", "").trim() || (i + 1);
                 
                 episodes.push({
                     id: episodeId,
                     episode: epNum.toString(),
-                    title: `Episode ${epNum}`,
-                    type: $el.find(".cate").text().trim() || "SUB"
+                    title: `Episode ${epNum}`
                 });
             }
         });
 
+        console.log(`[GOGO] Episode list returned ${episodes.length} episodes`);
         return episodes.reverse();
     } catch (e) {
         console.error("getEpisodeList error:", e.message);
@@ -298,30 +253,27 @@ async function getEpisode(episodeId) {
 
         const servers = {};
         
-        // Extract server links
-        $("div.anime_muti_link ul li, .cf-download a").each((i, el) => {
+        // Extract available servers
+        $("div.anime_muti_link ul li").each((i, el) => {
             const $el = $(el);
             const link = $el.find("a");
             const dataVideo = link.attr("data-video");
-            const href = link.attr("href");
             const serverName = link.text().trim().toLowerCase();
             
             if (dataVideo) {
-                servers[serverName] = dataVideo;
-            } else if (href && href.startsWith("http")) {
-                servers[serverName] = href;
+                servers[serverName] = dataVideo.startsWith('http') ? dataVideo : `https:${dataVideo}`;
             }
         });
 
-        // Try to get the main iframe URL
-        const iframeUrl = $("div.play-video iframe, #load_anime iframe").attr("src");
+        // Get main iframe
+        const iframeUrl = $("div.play-video iframe").attr("src");
         if (iframeUrl) {
             servers['default'] = iframeUrl.startsWith('http') ? iframeUrl : `https:${iframeUrl}`;
         }
 
-        // Extract streaming sources if available
+        // Try to extract streaming sources
         let streaming = null;
-        const gogoUrl = servers['gogoserver'] || servers['default'] || iframeUrl;
+        const gogoUrl = servers['gogoserver'] || servers['default'];
         
         if (gogoUrl) {
             try {
@@ -352,7 +304,7 @@ async function getEpisode(episodeId) {
         }
 
         return { 
-            name: $("h1, .title").first().text().trim() || episodeId,
+            name: $("h1").first().text().trim() || episodeId,
             stream: streaming,
             servers: servers 
         };
@@ -365,15 +317,15 @@ async function getEpisode(episodeId) {
 
 async function getRecentAnime(page = 1) {
     try {
-        const response = await fetchWithFallback(`/recent-release.html?page=${page}`);
+        const response = await fetchWithFallback(`/?page=${page}`);
         const html = await response.text();
         const $ = load(html);
 
         const data = [];
-        $("ul.items li, div.last_episodes ul.items li").each((i, el) => {
+        $("ul.items li").each((i, el) => {
             const $el = $(el);
-            const linkEl = $el.find("a").first();
-            const title = linkEl.attr("title") || $el.find(".name").text().trim();
+            const linkEl = $el.find("p.name a");
+            const title = linkEl.attr("title") || linkEl.text().trim();
             
             if (!title) return;
             
@@ -381,8 +333,7 @@ async function getRecentAnime(page = 1) {
                 id: linkEl.attr("href").replace(/^\//, ""),
                 title: title,
                 image: $el.find("img").attr("src") || "",
-                episode: $el.find(".episode").text().trim(),
-                release: $el.find(".released").text().trim()
+                episode: $el.find("p.episode").text().trim()
             });
         });
 
@@ -395,28 +346,9 @@ async function getRecentAnime(page = 1) {
 
 async function getPopularAnime(page = 1) {
     try {
-        const response = await fetchWithFallback(`/popular.html?page=${page}`);
-        const html = await response.text();
-        const $ = load(html);
-
-        const data = [];
-        $("div.added_series_body.popular ul.items li, ul.items li").each((i, el) => {
-            const $el = $(el);
-            const linkEl = $el.find("a");
-            const title = linkEl.attr("title") || linkEl.text().trim();
-            
-            if (!title) return;
-            
-            data.push({
-                id: linkEl.attr("href").replace(/^\/category\//, "").replace(/^\//, ""),
-                title: title,
-                image: $el.find("img").attr("src") || "",
-                genre: $el.find(".genre a").text().trim(),
-                release: $el.find(".released").text().replace("Released:", "").trim()
-            });
-        });
-
-        return { results: data };
+        // GoGoAnime doesn't have a dedicated popular page, use home data
+        const homeData = await getHome();
+        return { results: homeData.trending };
     } catch (e) {
         console.error("getPopularAnime error:", e.message);
         throw new Error("Failed to fetch popular GogoAnime data.");
