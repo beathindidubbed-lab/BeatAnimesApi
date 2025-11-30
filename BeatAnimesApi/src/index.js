@@ -169,7 +169,6 @@ http.createServer(async (req, res) => {
                     responseBody = JSON.stringify(responseData);
                 }
             }
-        }
             
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
@@ -399,5 +398,6 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
 
 
