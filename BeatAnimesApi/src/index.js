@@ -199,13 +199,13 @@ http.createServer(async (req, res) => {
         
                const responseData = {
                    results: episodeData
-              };
+               };
         
-              CACHE[cacheKey] = {
-               data: responseData,
-               expires: Date.now() + 5 * 60 * 1000,
-             };
-              responseBody = JSON.stringify(responseData);
+               CACHE[cacheKey] = {
+                   data: responseData,
+                   expires: Date.now() + 5 * 60 * 1000,
+               };
+                responseBody = JSON.stringify(responseData);
         
         } else if (path.startsWith("/download/")) {
             const episodeId = decodeURIComponent(path.substring(10));
@@ -401,6 +401,7 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
 
 
 
