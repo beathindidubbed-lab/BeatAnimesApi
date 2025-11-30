@@ -9,7 +9,7 @@ import {
     getEpisode,
     GogoDLScrapper,
     getGogoAuthKey,
-    getHome, // <-- Added getHome import
+    getHome,
 } from "./gogo.js";
 
 import {
@@ -21,15 +21,14 @@ import {
 import { SaveError } from "./errorHandler.js";
 import increaseViews from "./statsHandler.js";
 
-// Cache Objects
-let CACHE = {}; // Used for /episode and /upcoming
-let HOME_CACHE = {}; // Used for /home
-let ANIME_CACHE = {}; // Used for /anime
-let SEARCH_CACHE = {}; // Used for /search
-let REC_CACHE = {}; // Used for /recommendations
-let RECENT_CACHE = {}; // Used for /recent
-let GP_CACHE = {}; // Used for /gogoPopular
-let AT_CACHE = {}; // Used for /trending
+let CACHE = {};
+let HOME_CACHE = {};
+let ANIME_CACHE = {};
+let SEARCH_CACHE = {};
+let REC_CACHE = {};
+let RECENT_CACHE = {};
+let GP_CACHE = {};
+let AT_CACHE = {};
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -49,13 +48,11 @@ http.createServer(async (req, res) => {
         const path = fullUrl.pathname;
         const searchParams = fullUrl.searchParams;
 
-        // Handle CORS preflight requests
         if (req.method === "OPTIONS") {
             res.writeHead(204, corsHeaders);
             return res.end();
         }
 
-        // Track views (async, fire-and-forget)
         increaseViews(req.headers).catch((e) => console.error("Views tracking failed:", e.message));
 
         // Router
@@ -173,6 +170,7 @@ http.createServer(async (req, res) => {
                 }
             }
         }
+            
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
             const page = parseInt(searchParams.get("page")) || 1;
@@ -188,62 +186,7 @@ http.createServer(async (req, res) => {
                 };
                 responseBody = JSON.stringify({ results: data });
             }
-        } else if (path.startsWith("/anime/")) {
-            const animeid = decodeURIComponent(path.substring(7));
-
-            if (ANIME_CACHE[animeid] && ANIME_CACHE[animeid].expires > Date.now()) {
-                responseBody = JSON.stringify(ANIME_CACHE[animeid].data);
-            } else {
-                try {
-                    const gogoData = await getAnime(animeid);
-                    
-                    const responseData = {
-                        results: {
-                            source: "gogoanime",
-                            name: gogoData.details.title,
-                            image: gogoData.details.image,
-                            plot_summary: gogoData.details.synopsis,
-                            other_name: gogoData.details.otherName,
-                            released: gogoData.details.release,
-                            status: gogoData.details.status,
-                            genre: gogoData.details.genres.join(", "),
-                            type: "TV",
-                            // Changed episode mapping for clearer object structure
-                            episodes: gogoData.episodes.map(ep => ({ episode: ep.episode, id: ep.id })) 
-                        }
-                    };
-                    
-                    ANIME_CACHE[animeid] = {
-                        data: responseData,
-                        expires: Date.now() + 60 * 60 * 1000,
-                    };
-                    responseBody = JSON.stringify(responseData);
-                } catch (gogoError) {
-                    console.warn(`Gogo failed for ${animeid}, trying Anilist:`, gogoError.message);
-                    
-                    // Fallback to Anilist
-                    const anilistSearch = await getAnilistSearch(animeid);
-                    if (!anilistSearch.results || anilistSearch.results.length === 0) {
-                        throw new Error("Anime not found on GogoAnime or Anilist");
-                    }
-                    
-                    // Assuming getAnilistAnime takes the first result's ID from the search
-                    const anilistData = await getAnilistAnime(anilistSearch.results[0].id);
-                    
-                    const responseData = {
-                        results: {
-                            source: "anilist",
-                            ...anilistData
-                        }
-                    };
-                    
-                    ANIME_CACHE[animeid] = {
-                        data: responseData,
-                        expires: Date.now() + 60 * 60 * 1000,
-                    };
-                    responseBody = JSON.stringify(responseData);
-                }
-            }
+        
         } else if (path.startsWith("/episode/")) {
             const episodeId = decodeURIComponent(path.substring(9));
 
@@ -265,9 +208,8 @@ http.createServer(async (req, res) => {
         } else if (path.startsWith("/download/")) {
             const episodeId = decodeURIComponent(path.substring(10));
 
-            const cacheKey = `dl_${episodeId}`;
-            if (CACHE[cacheKey] && CACHE[cacheKey].expires > Date.now()) {
-                responseBody = JSON.stringify(CACHE[cacheKey].data);
+            if (CACHE[`dl_${episodeId}`] && CACHE[`dl_${episodeId}`].expires > Date.now()) {
+                responseBody = JSON.stringify(CACHE[`dl_${episodeId}`].data);
             } else {
                 const dlData = await GogoDLScrapper(episodeId);
                 
@@ -275,7 +217,7 @@ http.createServer(async (req, res) => {
                     results: dlData
                 };
                 
-                CACHE[cacheKey] = {
+                CACHE[`dl_${episodeId}`] = {
                     data: responseData,
                     expires: Date.now() + 60 * 60 * 1000,
                 };
@@ -362,7 +304,7 @@ http.createServer(async (req, res) => {
                 
                 CACHE[cacheKey] = {
                     data: responseData,
-                    expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours cache
+                    expires: Date.now() + 24 * 60 * 60 * 1000,
                 };
                 responseBody = JSON.stringify(responseData);
             }
@@ -371,7 +313,6 @@ http.createServer(async (req, res) => {
             responseBody = JSON.stringify({ authKey: authKey });
         } else if (path === "/") {
             contentType = "text/html";
-            // The HTML response for the root path remains the same
             responseBody = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -442,7 +383,6 @@ http.createServer(async (req, res) => {
         console.error(`❌ API Error [${req.url}]:`, e.message);
         await SaveError(e.message, req.url).catch(() => {});
         
-        // Determine status code based on error message
         statusCode = e.message.includes("not found") ? 404 : 500;
         responseBody = JSON.stringify({ 
             error: e.message || "Internal Server Error",
