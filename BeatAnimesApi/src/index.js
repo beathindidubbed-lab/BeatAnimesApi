@@ -61,51 +61,63 @@ http.createServer(async (req, res) => {
                 status: "ok",
                 timestamp: new Date().toISOString(),
             });
-        } else if (path === "/home") {
-            if (HOME_CACHE.data && HOME_CACHE.expires > Date.now()) {
-                responseBody = JSON.stringify({ results: HOME_CACHE.data });
-            } else {
-                try {
-                    const [gogoHome, anilistTrending, anilistUpcoming] = await Promise.allSettled([
-                        getHome(),
-                        getAnilistTrending(1, 10),
-                        getAnilistUpcoming(1, 10)
-                    ]);
+        } async function initializePage() {
+            try {
+                console.log("🚀 Starting BeatAnimes...");
+                document.getElementById("load").style.display = "block";
 
-                    const data = {
-                        gogoRecent: gogoHome.status === 'fulfilled' ? gogoHome.value.recent : [],
-                        gogoPopular: gogoHome.status === 'fulfilled' ? gogoHome.value.trending : [],
-                        anilistTrending: anilistTrending.status === 'fulfilled' && anilistTrending.value?.media 
-                            ? anilistTrending.value.media 
-                            : [],
-                        anilistUpcoming: anilistUpcoming.status === 'fulfilled' && anilistUpcoming.value?.media 
-                            ? anilistUpcoming.value.media 
-                            : []
-                    };
+                console.log("📡 Fetching /home API...");
+               const homeResponse = await getJson(IndexApi);
+               console.log("📦 Home API Response:", homeResponse);
+        
+        // ✅ FIXED: Proper data extraction
+              let homeData = homeResponse.results || homeResponse;
+        
+        // Extract arrays directly
+              let popularData = homeData.popular || [];
+              let recentData = homeData.recent || [];
+              let trendingData = homeData.trending || [];
+        
+              console.log(`📊 Extracted: ${popularData.length} popular, ${recentData.length} recent, ${trendingData.length} trending`);
 
-                    // Simplified response structure for frontend
-                    const simplifiedData = {
-                        trending: data.anilistTrending,
-                        popular: { results: data.gogoPopular },
-                        recent: { results: data.gogoRecent },
-                        upcoming: data.anilistUpcoming
-                    };
+        // Load all sections
+              if (popularData.length > 0) {
+                  await getTrendingAnimes(popularData);
+                  await getPopularAnimes(popularData);
+            
+            // Start slider
+                  slideIndex = 1;
+                  showSlides(slideIndex);
+                  showSlides2();
+              } else {
+                  console.error("❌ No popular data - banner and popular sections will be empty");
+              }
 
-                    HOME_CACHE = {
-                        data: simplifiedData,
-                        expires: Date.now() + 30 * 60 * 1000, // 30 minutes cache
-                    };
-                    
-                    responseBody = JSON.stringify({ results: simplifiedData });
-                } catch (error) {
-                    console.error("Home API error:", error);
-                    // Return cached data if available, even if expired
-                    if (HOME_CACHE.data) {
-                        responseBody = JSON.stringify({ results: HOME_CACHE.data });
-                    } else {
-                        throw error;
-                    }
-                }
+              if (recentData.length > 0) {
+                  await initRecentSection(recentData);
+              } else {
+                  console.warn("⚠️ No recent data from /home, will try /recent/1");
+                  await getRecentAnimes(1);
+              }
+
+              createLoadMoreButton();
+              RefreshLazyLoader();
+        
+              document.getElementById("load").style.display = "none";
+              console.log("✅ Page loaded successfully!");
+
+            } catch (error) {
+               console.error("❌ Fatal error:", error);
+               document.getElementById("load").innerHTML = `
+                   <div style="color: white; text-align: center; padding: 40px;">
+                       <h2 style="color: #eb3349;">⚠️ Failed to Load</h2>
+                       <p style="margin: 20px 0;">${error.message}</p>
+                       <p style="font-size: 14px; opacity: 0.7;">Check console for details (F12)</p>
+                       <button onclick="location.reload()" style="background: #eb3349; color: white; padding: 12px 30px; border: none; border-radius: 25px; cursor: pointer; font-size: 16px; margin-top: 20px;">
+                          🔄 Retry
+                       </button>
+                   </div>
+              `;
             }
         } else if (path.startsWith("/search/")) {
             const query = decodeURIComponent(path.substring(8));
@@ -388,3 +400,4 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => {
     console.log(`✅ Server running at http://localhost:${PORT}`);
 });
+
