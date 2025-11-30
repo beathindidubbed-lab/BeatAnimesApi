@@ -11,10 +11,10 @@ import cors from 'cors';
 // ============================================
 // CONFIGURATION - SUPER SIMPLE WITH BOT!
 // ============================================
-const API_ID = 21707624;
-const API_HASH = '84647ccc68eae30713d82b2f134ab23c';
+const API_ID = process.env.API_ID || '';
+const API_HASH = process.env.API_HASH ||'';
 const BOT_TOKEN = process.env.BOT_TOKEN || ''; // Get from @BotFather
-const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
+const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '';
 
 // ============================================
 // DATABASE
@@ -513,3 +513,4 @@ async function startServer() {
 }
 
 startServer();
+
