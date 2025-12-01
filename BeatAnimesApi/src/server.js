@@ -235,6 +235,7 @@ async function scanTelegramChannel() {
 // ============================================
 // VIDEO PROCESSOR
 // ============================================
+
 async function processVideos(videoMessages) {
     console.log('🔧 Processing videos...');
     
@@ -284,6 +285,10 @@ async function processVideos(videoMessages) {
         
         const episode = season.episodes.get(parsed.episode);
         
+        // ✅ FIX: Correct video URL format
+        // Extract channel name from CHANNEL_USERNAME (e.g., "@BeatAnimes" -> "BeatAnimes")
+        const channelName = CHANNEL_USERNAME.replace('@', '');
+        
         episode.variants.push({
             quality: parsed.quality,
             language: parsed.language,
@@ -292,7 +297,8 @@ async function processVideos(videoMessages) {
             fileSize: video.fileSize,
             duration: video.duration,
             date: video.date,
-            videoUrl: `${CHANNEL_USERNAME}/${video.messageId}`
+            // This creates: "BeatAnimes/123" (NOT "t.me/BeatAnimes/123")
+            videoUrl: `${channelName}/${video.messageId}`
         });
     }
     
@@ -324,7 +330,6 @@ async function processVideos(videoMessages) {
     console.log(`✅ Processed ${animeList.length} anime`);
     return animeList;
 }
-
 // ============================================
 // API HELPER FUNCTIONS
 // ============================================
@@ -616,5 +621,6 @@ async function startServer() {
 }
 
 startServer();
+
 
 
