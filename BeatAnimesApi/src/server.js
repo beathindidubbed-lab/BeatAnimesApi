@@ -503,7 +503,8 @@ app.get('/ping', (req, res) => {
         status: 'ok', 
         timestamp: new Date().toISOString(),
         animeCount: ANIME_DATABASE.length 
-  
+    });
+});
 
 app.get('/', (req, res) => {
     res.json({ 
@@ -615,4 +616,5 @@ async function startServer() {
 }
 
 startServer();
+
 
