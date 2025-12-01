@@ -10,7 +10,7 @@ import cors from 'cors';
 // ============================================
 // CRITICAL FIX: Parse API_ID as INTEGER
 // ============================================
-const API_ID = parseInt(process.env.API_ID, 10); // ✅ MUST be integer
+const API_ID = parseInt(process.env.API_ID, 10);
 const API_HASH = process.env.API_HASH || '';
 const SESSION_STRING = process.env.SESSION_STRING || ''; 
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
@@ -47,7 +47,7 @@ const client = new TelegramClient(
     API_HASH,
     {
         connectionRetries: 5,
-        useWSS: true, // Better for Render
+        useWSS: true,
     }
 );
 
@@ -326,7 +326,7 @@ async function processVideos(videoMessages) {
 }
 
 // ============================================
-// API ENDPOINTS
+// API HELPER FUNCTIONS
 // ============================================
 function getHomeData() {
     const sortedByRecent = [...ANIME_DATABASE].sort((a, b) => {
@@ -400,17 +400,37 @@ function searchAnime(query) {
 }
 
 function getAnimeDetails(animeId) {
-    const anime = ANIME_DATABASE.find(a => a.id === animeId);
-    if (!anime) return { results: null };
+    // Try to find by ID first
+    let anime = ANIME_DATABASE.find(a => a.id === animeId);
+    
+    // If not found by ID, try normalized title search
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
+    }
+    
+    // If still not found, try partial match
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => 
+            a.normalizedTitle.includes(normalizedQuery) ||
+            normalizedQuery.includes(a.normalizedTitle)
+        );
+    }
+    
+    if (!anime) {
+        return { results: null };
+    }
     
     const anilist = anime.anilistData;
     const episodes = [];
+    
     for (const season of anime.seasons) {
         for (const ep of season.episodes) {
+            // Format: ["episode-number", "episode-id"]
             episodes.push([
-                `S${season.season}E${ep.episode}`,
-                `${anime.id}-episode-${ep.episode}`,
-                ep.variants.length
+                ep.episode.toString(),
+                `${anime.id}-episode-${ep.episode}`
             ]);
         }
     }
@@ -419,7 +439,7 @@ function getAnimeDetails(animeId) {
         results: {
             source: 'telegram',
             name: anime.title,
-            image: anilist?.image || '',
+            image: anilist?.image || `https://via.placeholder.com/300x400?text=${encodeURIComponent(anime.title)}`,
             banner: anilist?.banner,
             plot_summary: anilist?.description || '',
             other_name: anilist?.titleRomaji || anime.title,
@@ -438,8 +458,17 @@ function getEpisodeInfo(episodeId) {
     const animeId = parts[0];
     const episodeNum = parseInt(parts[1]);
     
-    const anime = ANIME_DATABASE.find(a => a.id === animeId);
-    if (!anime) return { results: null };
+    // Try to find anime
+    let anime = ANIME_DATABASE.find(a => a.id === animeId);
+    
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
+    }
+    
+    if (!anime) {
+        return { results: null };
+    }
     
     let episodeData = null;
     for (const season of anime.seasons) {
@@ -450,7 +479,9 @@ function getEpisodeInfo(episodeId) {
         }
     }
     
-    if (!episodeData) return { results: null };
+    if (!episodeData) {
+        return { results: null };
+    }
     
     return {
         results: {
@@ -475,12 +506,35 @@ app.get('/ping', (req, res) => {
     });
 });
 
-app.get('/home', (req, res) => res.json(getHomeData()));
-app.get('/search/:query', (req, res) => res.json(searchAnime(req.params.query)));
-app.get('/anime/:id', (req, res) => res.json(getAnimeDetails(req.params.id)));
-app.get('/episode/:id', (req, res) => res.json(getEpisodeInfo(req.params.id)));
-app.get('/recent/:page', (req, res) => res.json({ results: getHomeData().results.recent }));
-app.get('/trending/:page', (req, res) => res.json({ results: { trending: getHomeData().results.trending } }));
+app.get('/home', (req, res) => {
+    console.log('📡 /home request');
+    res.json(getHomeData());
+});
+
+app.get('/search/:query', (req, res) => {
+    console.log('📡 /search request:', req.params.query);
+    res.json(searchAnime(req.params.query));
+});
+
+app.get('/anime/:id', (req, res) => {
+    console.log('📡 /anime request:', req.params.id);
+    const result = getAnimeDetails(req.params.id);
+    console.log('📤 Sending anime details:', result);
+    res.json(result);
+});
+
+app.get('/episode/:id', (req, res) => {
+    console.log('📡 /episode request:', req.params.id);
+    res.json(getEpisodeInfo(req.params.id));
+});
+
+app.get('/recent/:page', (req, res) => {
+    res.json({ results: getHomeData().results.recent });
+});
+
+app.get('/trending/:page', (req, res) => {
+    res.json({ results: { trending: getHomeData().results.trending } });
+});
 
 // ============================================
 // MAIN STARTUP
@@ -499,7 +553,7 @@ async function startServer() {
         console.log('📱 Connecting to Telegram...');
         
         if (!SESSION_STRING) {
-            throw new Error('SESSION_STRING is required! You must generate it first - see instructions below.');
+            throw new Error('SESSION_STRING is required!');
         }
 
         await client.connect();
