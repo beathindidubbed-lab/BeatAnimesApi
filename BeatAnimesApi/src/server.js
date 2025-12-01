@@ -123,6 +123,35 @@ async function searchAnilist(animeName) {
     }
 }
 
+import requests
+
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+
+def get_telegram_video_url(channel_name, message_id):
+    # Get the message to extract file_id
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
+    params = {"chat_id": f"@{channel_name}"}
+    
+    chat = requests.get(url, params=params).json()
+    chat_id = chat['result']['id']
+    
+    # Get message content
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getMessage"
+    params = {"chat_id": chat_id, "message_ids": message_id}
+    
+    msg = requests.get(url, params=params).json()
+    file_id = msg['result']['video']['file_id']
+    
+    # Get direct download link
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile"
+    params = {"file_id": file_id}
+    
+    file_info = requests.get(url, params=params).json()
+    file_path = file_info['result']['file_path']
+    
+    direct_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+    return direct_url
+
 // ============================================
 // FILENAME PARSER
 // ============================================
@@ -622,3 +651,4 @@ async function startServer() {
 }
 
 startServer();
+
