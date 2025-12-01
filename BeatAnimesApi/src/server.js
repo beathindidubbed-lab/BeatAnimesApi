@@ -14,6 +14,7 @@ const API_ID = parseInt(process.env.API_ID, 10);
 const API_HASH = process.env.API_HASH || '';
 const SESSION_STRING = process.env.SESSION_STRING || ''; 
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
+const BOT_TOKEN = process.env.BOT_TOKEN || '';
 
 // Validation
 if (!API_ID || isNaN(API_ID)) {
@@ -758,5 +759,6 @@ async function startServer() {
 }
 
 startServer();
+
 
 
