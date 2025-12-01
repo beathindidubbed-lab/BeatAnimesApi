@@ -15,6 +15,7 @@ const API_HASH = process.env.API_HASH || '';
 const SESSION_STRING = process.env.SESSION_STRING || ''; 
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
+const YOUR_BOT_TOKEN_HERE = process.env.YOUR_BOT_TOKEN_HERE || '';
 
 // Validation
 if (!API_ID || isNaN(API_ID)) {
@@ -126,7 +127,6 @@ async function searchAnilist(animeName) {
 
 import requests
 
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 
 def get_telegram_video_url(channel_name, message_id):
     # Get the message to extract file_id
@@ -759,6 +759,7 @@ async function startServer() {
 }
 
 startServer();
+
 
 
 
