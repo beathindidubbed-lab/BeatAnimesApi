@@ -14,8 +14,6 @@ const API_ID = parseInt(process.env.API_ID, 10);
 const API_HASH = process.env.API_HASH || '';
 const SESSION_STRING = process.env.SESSION_STRING || ''; 
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
-const BOT_TOKEN = process.env.BOT_TOKEN || '';
-const YOUR_BOT_TOKEN_HERE = process.env.YOUR_BOT_TOKEN_HERE || '';
 
 // Validation
 if (!API_ID || isNaN(API_ID)) {
@@ -124,34 +122,6 @@ async function searchAnilist(animeName) {
         return null;
     }
 }
-
-import requests
-
-
-def get_telegram_video_url(channel_name, message_id):
-    # Get the message to extract file_id
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChat"
-    params = {"chat_id": f"@{channel_name}"}
-    
-    chat = requests.get(url, params=params).json()
-    chat_id = chat['result']['id']
-    
-    # Get message content
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getMessage"
-    params = {"chat_id": chat_id, "message_ids": message_id}
-    
-    msg = requests.get(url, params=params).json()
-    file_id = msg['result']['video']['file_id']
-    
-    # Get direct download link
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile"
-    params = {"file_id": file_id}
-    
-    file_info = requests.get(url, params=params).json()
-    file_path = file_info['result']['file_path']
-    
-    direct_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-    return direct_url
 
 // ============================================
 // FILENAME PARSER
@@ -265,7 +235,6 @@ async function scanTelegramChannel() {
 // ============================================
 // VIDEO PROCESSOR
 // ============================================
-
 async function processVideos(videoMessages) {
     console.log('🔧 Processing videos...');
     
@@ -318,8 +287,7 @@ async function processVideos(videoMessages) {
         
         const episode = season.episodes.get(parsed.episode);
         
-        // ✅ CRITICAL FIX: Separate channel name and message ID
-        // Frontend can construct full URL: `https://t.me/${channelName}/${messageId}`
+        // ✅ Store both channel name and message ID separately
         episode.variants.push({
             quality: parsed.quality,
             language: parsed.language,
@@ -328,8 +296,8 @@ async function processVideos(videoMessages) {
             fileSize: video.fileSize,
             duration: video.duration,
             date: video.date,
-            channelName: channelName,  // Just "BeatAnimes"
-            videoUrl: `${channelName}/${video.messageId}`  // "BeatAnimes/123" for compatibility
+            channelName: channelName,
+            videoUrl: `${channelName}/${video.messageId}`
         });
     }
     
@@ -361,6 +329,7 @@ async function processVideos(videoMessages) {
     console.log(`✅ Processed ${animeList.length} anime`);
     return animeList;
 }
+
 // ============================================
 // API HELPER FUNCTIONS
 // ============================================
@@ -436,6 +405,8 @@ function searchAnime(query) {
 }
 
 function getAnimeDetails(animeId) {
+    console.log('🔍 Looking for anime:', animeId);
+    
     // Try to find by ID first
     let anime = ANIME_DATABASE.find(a => a.id === animeId);
     
@@ -443,6 +414,7 @@ function getAnimeDetails(animeId) {
     if (!anime) {
         const normalizedQuery = normalizeTitle(animeId);
         anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
+        console.log('🔄 Trying normalized search:', normalizedQuery);
     }
     
     // If still not found, try partial match
@@ -452,11 +424,15 @@ function getAnimeDetails(animeId) {
             a.normalizedTitle.includes(normalizedQuery) ||
             normalizedQuery.includes(a.normalizedTitle)
         );
+        console.log('🔄 Trying partial match');
     }
     
     if (!anime) {
+        console.error('❌ Anime not found');
         return { results: null };
     }
+    
+    console.log('✅ Found anime:', anime.title);
     
     const anilist = anime.anilistData;
     const episodes = [];
@@ -470,6 +446,8 @@ function getAnimeDetails(animeId) {
             ]);
         }
     }
+    
+    console.log('📋 Total episodes:', episodes.length);
     
     return {
         results: {
@@ -490,9 +468,8 @@ function getAnimeDetails(animeId) {
 }
 
 // ============================================
-// EPISODE INFO - FIXED VERSION
+// FIXED EPISODE INFO FUNCTION
 // ============================================
-
 function getEpisodeInfo(episodeId) {
     console.log('🔍 Looking for episode:', episodeId);
     
@@ -565,76 +542,6 @@ function getEpisodeInfo(episodeId) {
 }
 
 // ============================================
-// ADD BETTER ERROR HANDLING TO THE ROUTE
-// ============================================
-
-app.get('/episode/:id', (req, res) => {
-    console.log('📡 /episode request:', req.params.id);
-    const result = getEpisodeInfo(req.params.id);
-    
-    if (!result.results) {
-        console.error('❌ Episode not found');
-        res.status(404).json({ 
-            error: 'Episode not found',
-            episodeId: req.params.id,
-            suggestion: 'Check if the anime and episode exist in the database'
-        });
-        return;
-    }
-    
-    console.log('✅ Sending episode data');
-    res.json(result);
-});
-
-// ============================================
-// DEBUG ROUTE - Remove after fixing
-// ============================================
-
-app.get('/debug/anime/:id', (req, res) => {
-    const animeId = req.params.id;
-    
-    // Find anime
-    let anime = ANIME_DATABASE.find(a => a.id === animeId);
-    
-    if (!anime) {
-        const normalizedQuery = normalizeTitle(animeId);
-        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
-    }
-    
-    if (!anime) {
-        res.json({
-            error: 'Anime not found',
-            searchedId: animeId,
-            availableIds: ANIME_DATABASE.map(a => ({
-                id: a.id,
-                title: a.title,
-                normalizedTitle: a.normalizedTitle,
-                episodeCount: a.totalEpisodes
-            }))
-        });
-        return;
-    }
-    
-    res.json({
-        anime: {
-            id: anime.id,
-            title: anime.title,
-            normalizedTitle: anime.normalizedTitle,
-            totalEpisodes: anime.totalEpisodes
-        },
-        episodes: anime.seasons.flatMap(season => 
-            season.episodes.map(ep => ({
-                episodeNumber: ep.episode,
-                episodeId: `${anime.id}-episode-${ep.episode}`,
-                variantCount: ep.variants.length,
-                languages: [...new Set(ep.variants.map(v => v.language))],
-                qualities: [...new Set(ep.variants.map(v => v.quality))]
-            }))
-        )
-    });
-});
-
-// ============================================
 // EXPRESS SERVER
 // ============================================
 const app = express();
@@ -660,6 +567,7 @@ app.get('/', (req, res) => {
             episode: '/episode/:id',
             recent: '/recent/:page',
             trending: '/trending/:page',
+            debug: '/debug/anime/:id',
             ping: '/ping'
         },
         stats: {
@@ -668,6 +576,7 @@ app.get('/', (req, res) => {
         }
     });
 });
+
 app.get('/home', (req, res) => {
     console.log('📡 /home request');
     res.json(getHomeData());
@@ -681,13 +590,36 @@ app.get('/search/:query', (req, res) => {
 app.get('/anime/:id', (req, res) => {
     console.log('📡 /anime request:', req.params.id);
     const result = getAnimeDetails(req.params.id);
-    console.log('📤 Sending anime details:', result);
+    
+    if (!result.results) {
+        console.error('❌ Anime not found');
+        res.status(404).json({ 
+            error: 'Anime not found',
+            animeId: req.params.id
+        });
+        return;
+    }
+    
+    console.log('✅ Sending anime details');
     res.json(result);
 });
 
 app.get('/episode/:id', (req, res) => {
     console.log('📡 /episode request:', req.params.id);
-    res.json(getEpisodeInfo(req.params.id));
+    const result = getEpisodeInfo(req.params.id);
+    
+    if (!result.results) {
+        console.error('❌ Episode not found');
+        res.status(404).json({ 
+            error: 'Episode not found',
+            episodeId: req.params.id,
+            suggestion: 'Check if the anime and episode exist in the database'
+        });
+        return;
+    }
+    
+    console.log('✅ Sending episode data with', result.results.variants.length, 'variants');
+    res.json(result);
 });
 
 app.get('/recent/:page', (req, res) => {
@@ -696,6 +628,54 @@ app.get('/recent/:page', (req, res) => {
 
 app.get('/trending/:page', (req, res) => {
     res.json({ results: { trending: getHomeData().results.trending } });
+});
+
+// ============================================
+// DEBUG ROUTE
+// ============================================
+app.get('/debug/anime/:id', (req, res) => {
+    const animeId = req.params.id;
+    
+    // Find anime
+    let anime = ANIME_DATABASE.find(a => a.id === animeId);
+    
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
+    }
+    
+    if (!anime) {
+        res.json({
+            error: 'Anime not found',
+            searchedId: animeId,
+            availableIds: ANIME_DATABASE.slice(0, 20).map(a => ({
+                id: a.id,
+                title: a.title,
+                normalizedTitle: a.normalizedTitle,
+                episodeCount: a.totalEpisodes
+            }))
+        });
+        return;
+    }
+    
+    res.json({
+        anime: {
+            id: anime.id,
+            title: anime.title,
+            normalizedTitle: anime.normalizedTitle,
+            totalEpisodes: anime.totalEpisodes
+        },
+        episodes: anime.seasons.flatMap(season => 
+            season.episodes.map(ep => ({
+                episodeNumber: ep.episode,
+                episodeId: `${anime.id}-episode-${ep.episode}`,
+                variantCount: ep.variants.length,
+                languages: [...new Set(ep.variants.map(v => v.language))],
+                qualities: [...new Set(ep.variants.map(v => v.quality))],
+                firstVariant: ep.variants[0] // Show first variant for debugging
+            }))
+        )
+    });
 });
 
 // ============================================
@@ -759,7 +739,3 @@ async function startServer() {
 }
 
 startServer();
-
-
-
-
