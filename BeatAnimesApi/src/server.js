@@ -503,9 +503,27 @@ app.get('/ping', (req, res) => {
         status: 'ok', 
         timestamp: new Date().toISOString(),
         animeCount: ANIME_DATABASE.length 
+  
+
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'BeatAnimes API',
+        status: 'running',
+        endpoints: {
+            home: '/home',
+            search: '/search/:query',
+            anime: '/anime/:id',
+            episode: '/episode/:id',
+            recent: '/recent/:page',
+            trending: '/trending/:page',
+            ping: '/ping'
+        },
+        stats: {
+            totalAnime: ANIME_DATABASE.length,
+            totalEpisodes: ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0)
+        }
     });
 });
-
 app.get('/home', (req, res) => {
     console.log('📡 /home request');
     res.json(getHomeData());
@@ -597,3 +615,4 @@ async function startServer() {
 }
 
 startServer();
+
