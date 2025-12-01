@@ -241,6 +241,9 @@ async function processVideos(videoMessages) {
     
     const animeMap = new Map();
     
+    // Extract channel name once (remove @ symbol)
+    const channelName = CHANNEL_USERNAME.replace('@', '');
+    
     for (const video of videoMessages) {
         const parsed = parseAnimeFilename(video.filename);
         const normalizedTitle = normalizeTitle(parsed.title);
@@ -285,10 +288,8 @@ async function processVideos(videoMessages) {
         
         const episode = season.episodes.get(parsed.episode);
         
-        // ✅ FIX: Correct video URL format
-        // Extract channel name from CHANNEL_USERNAME (e.g., "@BeatAnimes" -> "BeatAnimes")
-        const channelName = CHANNEL_USERNAME.replace('@', '');
-        
+        // ✅ CRITICAL FIX: Separate channel name and message ID
+        // Frontend can construct full URL: `https://t.me/${channelName}/${messageId}`
         episode.variants.push({
             quality: parsed.quality,
             language: parsed.language,
@@ -297,8 +298,8 @@ async function processVideos(videoMessages) {
             fileSize: video.fileSize,
             duration: video.duration,
             date: video.date,
-            // This creates: "BeatAnimes/123" (NOT "t.me/BeatAnimes/123")
-            videoUrl: `${channelName}/${video.messageId}`
+            channelName: channelName,  // Just "BeatAnimes"
+            videoUrl: `${channelName}/${video.messageId}`  // "BeatAnimes/123" for compatibility
         });
     }
     
@@ -621,6 +622,3 @@ async function startServer() {
 }
 
 startServer();
-
-
-
