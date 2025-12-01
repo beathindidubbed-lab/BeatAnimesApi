@@ -488,35 +488,72 @@ function getAnimeDetails(animeId) {
     };
 }
 
+// ============================================
+// EPISODE INFO - FIXED VERSION
+// ============================================
+
 function getEpisodeInfo(episodeId) {
-    const parts = episodeId.split('-episode-');
-    const animeId = parts[0];
-    const episodeNum = parseInt(parts[1]);
+    console.log('🔍 Looking for episode:', episodeId);
     
-    // Try to find anime
-    let anime = ANIME_DATABASE.find(a => a.id === animeId);
+    // Find the last occurrence of '-episode-' to split correctly
+    const lastIndex = episodeId.lastIndexOf('-episode-');
     
-    if (!anime) {
-        const normalizedQuery = normalizeTitle(animeId);
-        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
-    }
-    
-    if (!anime) {
+    if (lastIndex === -1) {
+        console.error('❌ Invalid episode ID format:', episodeId);
         return { results: null };
     }
     
+    const animeId = episodeId.substring(0, lastIndex);
+    const episodeNum = parseInt(episodeId.substring(lastIndex + 9)); // 9 = length of '-episode-'
+    
+    console.log('📊 Parsed:', { animeId, episodeNum });
+    
+    // Try to find anime by exact ID first
+    let anime = ANIME_DATABASE.find(a => a.id === animeId);
+    
+    // If not found, try normalized title search
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
+        console.log('🔄 Trying normalized search:', normalizedQuery);
+    }
+    
+    // If still not found, try partial match
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => 
+            a.normalizedTitle.includes(normalizedQuery) ||
+            normalizedQuery.includes(a.normalizedTitle)
+        );
+        console.log('🔄 Trying partial match');
+    }
+    
+    if (!anime) {
+        console.error('❌ Anime not found for ID:', animeId);
+        console.log('📚 Available anime IDs:', ANIME_DATABASE.map(a => a.id).slice(0, 10));
+        return { results: null };
+    }
+    
+    console.log('✅ Found anime:', anime.title);
+    
+    // Find the episode
     let episodeData = null;
     for (const season of anime.seasons) {
         const ep = season.episodes.find(e => e.episode === episodeNum);
         if (ep) {
             episodeData = ep;
+            console.log('✅ Found episode:', episodeNum);
             break;
         }
     }
     
     if (!episodeData) {
+        console.error('❌ Episode not found:', episodeNum);
+        console.log('📋 Available episodes:', anime.seasons[0]?.episodes.map(e => e.episode));
         return { results: null };
     }
+    
+    console.log('✅ Episode has', episodeData.variants.length, 'variants');
     
     return {
         results: {
@@ -525,6 +562,76 @@ function getEpisodeInfo(episodeId) {
         }
     };
 }
+
+// ============================================
+// ADD BETTER ERROR HANDLING TO THE ROUTE
+// ============================================
+
+app.get('/episode/:id', (req, res) => {
+    console.log('📡 /episode request:', req.params.id);
+    const result = getEpisodeInfo(req.params.id);
+    
+    if (!result.results) {
+        console.error('❌ Episode not found');
+        res.status(404).json({ 
+            error: 'Episode not found',
+            episodeId: req.params.id,
+            suggestion: 'Check if the anime and episode exist in the database'
+        });
+        return;
+    }
+    
+    console.log('✅ Sending episode data');
+    res.json(result);
+});
+
+// ============================================
+// DEBUG ROUTE - Remove after fixing
+// ============================================
+
+app.get('/debug/anime/:id', (req, res) => {
+    const animeId = req.params.id;
+    
+    // Find anime
+    let anime = ANIME_DATABASE.find(a => a.id === animeId);
+    
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
+    }
+    
+    if (!anime) {
+        res.json({
+            error: 'Anime not found',
+            searchedId: animeId,
+            availableIds: ANIME_DATABASE.map(a => ({
+                id: a.id,
+                title: a.title,
+                normalizedTitle: a.normalizedTitle,
+                episodeCount: a.totalEpisodes
+            }))
+        });
+        return;
+    }
+    
+    res.json({
+        anime: {
+            id: anime.id,
+            title: anime.title,
+            normalizedTitle: anime.normalizedTitle,
+            totalEpisodes: anime.totalEpisodes
+        },
+        episodes: anime.seasons.flatMap(season => 
+            season.episodes.map(ep => ({
+                episodeNumber: ep.episode,
+                episodeId: `${anime.id}-episode-${ep.episode}`,
+                variantCount: ep.variants.length,
+                languages: [...new Set(ep.variants.map(v => v.language))],
+                qualities: [...new Set(ep.variants.map(v => v.quality))]
+            }))
+        )
+    });
+});
 
 // ============================================
 // EXPRESS SERVER
@@ -651,4 +758,5 @@ async function startServer() {
 }
 
 startServer();
+
 
