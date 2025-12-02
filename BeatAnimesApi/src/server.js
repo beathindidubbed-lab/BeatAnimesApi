@@ -254,7 +254,7 @@ function normalizeTitle(title) {
 }
 
 // ============================================
-// TELEGRAM CHANNEL SCANNER - READS CAPTIONS
+// TELEGRAM CHANNEL SCANNER - READS CAPTIONS + URL MESSAGES
 // ============================================
 async function scanTelegramChannel() {
     console.log('🔍 Scanning:', CHANNEL_USERNAME);
@@ -266,8 +266,11 @@ async function scanTelegramChannel() {
         console.log(`📦 Found ${messages.length} messages`);
         
         const videoMessages = [];
+        const urlMessages = new Map(); // Store URL-only messages
         
+        // First pass: collect all messages
         for (const message of messages) {
+            // Check for video messages
             if (message.media && message.media.document) {
                 const doc = message.media.document;
                 const mimeType = doc.mimeType;
@@ -286,7 +289,6 @@ async function scanTelegramChannel() {
                         }
                     }
                     
-                    // ✅ USE CAPTION if available, fallback to filename
                     const caption = message.message || '';
                     const parseSource = caption.trim() !== '' ? caption : filename;
                     
@@ -294,16 +296,53 @@ async function scanTelegramChannel() {
                         messageId: message.id,
                         filename: filename,
                         caption: caption,
-                        parseSource: parseSource,  // What we'll parse
+                        parseSource: parseSource,
                         fileSize: doc.size,
                         duration: duration,
                         date: message.date,
                     });
                 }
             }
+            // ✅ NEW: Check for URL-only text messages
+            else if (message.message && !message.media) {
+                const text = message.message.trim();
+                const urlMatch = text.match(/(https?:\/\/[^\s]+)/i);
+                
+                if (urlMatch) {
+                    // Extract episode info from text
+                    // Format: "S01E01 https://example.com/video.mp4"
+                    // Or: "Episode 1 https://example.com/video.mp4"
+                    // Or: "E01 https://example.com/video.mp4"
+                    const epMatch = text.match(/(?:S\d+)?E[p]?(\d+)|Episode\s*(\d+)|Ep\s*(\d+)|^(\d+)/i);
+                    
+                    if (epMatch) {
+                        const episodeNum = epMatch[1] || epMatch[2] || epMatch[3] || epMatch[4];
+                        urlMessages.set(parseInt(episodeNum), {
+                            url: urlMatch[1],
+                            text: text,
+                            messageId: message.id
+                        });
+                        console.log(`📌 Found URL message for Episode ${episodeNum}: ${urlMatch[1]}`);
+                    }
+                }
+            }
         }
         
-        console.log(`✅ Found ${videoMessages.length} videos`);
+        console.log(`✅ Found ${videoMessages.length} videos and ${urlMessages.size} URL messages`);
+        
+        // ✅ Second pass: Match URLs to videos by episode number
+        for (const video of videoMessages) {
+            // Parse to get episode number
+            const parsed = parseAnimeCaption(video.parseSource);
+            
+            // Check if we have a URL message for this episode
+            if (urlMessages.has(parsed.episode)) {
+                const urlData = urlMessages.get(parsed.episode);
+                video.externalUrl = urlData.url;
+                console.log(`🔗 Linked Episode ${parsed.episode} to URL: ${urlData.url}`);
+            }
+        }
+        
         return videoMessages;
         
     } catch (error) {
@@ -374,18 +413,21 @@ async function processVideos(videoMessages) {
         
         const episode = season.episodes.get(parsed.episode);
         
+        // ✅ Prioritize external URL from separate message
+        const finalDirectUrl = video.externalUrl || parsed.directUrl;
+        
         episode.variants.push({
             quality: parsed.quality,
             language: parsed.language,
             messageId: video.messageId,
             filename: video.filename,
             caption: video.caption,
-            directUrl: parsed.directUrl,  // ✅ Store direct URL if found
+            directUrl: finalDirectUrl,  // ✅ Use external URL if available
             fileSize: video.fileSize,
             duration: video.duration,
             date: video.date,
             channelName: channelName,
-            videoUrl: parsed.directUrl || `${channelName}/${video.messageId}`  // ✅ Use direct URL if available
+            videoUrl: finalDirectUrl || `${channelName}/${video.messageId}`  // ✅ Prioritize direct URL
         });
     }
     
@@ -613,8 +655,47 @@ app.get('/ping', (req, res) => {
     res.json({ 
         status: 'ok', 
         timestamp: new Date().toISOString(),
-        animeCount: ANIME_DATABASE.length 
+        animeCount: ANIME_DATABASE.length,
+        totalEpisodes: ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0)
     });
+});
+
+// ✅ NEW: Manual refresh endpoint
+app.post('/refresh', async (req, res) => {
+    console.log('📡 Manual refresh requested');
+    
+    if (!SESSION_STRING) {
+        res.status(503).json({
+            success: false,
+            message: 'Telegram not connected'
+        });
+        return;
+    }
+    
+    const success = await refreshDatabase();
+    
+    res.json({
+        success: success,
+        animeCount: ANIME_DATABASE.length,
+        totalEpisodes: ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0),
+        timestamp: new Date().toISOString()
+    });
+});
+
+// ✅ NEW: Webhook endpoint for auto-refresh on new messages
+app.post('/webhook', async (req, res) => {
+    console.log('📡 Webhook received');
+    
+    // Verify webhook (optional - add your secret token)
+    const token = req.headers['x-telegram-token'];
+    if (token !== process.env.WEBHOOK_TOKEN) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+    }
+    
+    await refreshDatabase();
+    
+    res.json({ success: true });
 });
 
 app.get('/', (req, res) => {
@@ -796,7 +877,7 @@ app.get('/debug/anime/:id', (req, res) => {
 });
 
 // ============================================
-// MAIN STARTUP
+// MAIN STARTUP + AUTO-REFRESH + MANUAL REFRESH
 // ============================================
 async function startServer() {
     console.log('🚀 Starting Telegram Scraper (Caption-based)...\n');
@@ -816,30 +897,39 @@ async function startServer() {
         await client.connect();
         console.log('✅ Telegram connected!\n');
         
-        const videos = await scanTelegramChannel();
-        ANIME_DATABASE = await processVideos(videos);
+        // ✅ Initial scan
+        await refreshDatabase();
         
-        console.log('\n' + '═'.repeat(60));
-        console.log('📊 DATABASE READY');
-        console.log('═'.repeat(60));
-        console.log(`📺 Total Anime: ${ANIME_DATABASE.length}`);
-        console.log(`🎬 Total Episodes: ${ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0)}`);
-        console.log('═'.repeat(60) + '\n');
-        
+        // ✅ Auto-refresh every 10 minutes (reduced from 30)
         setInterval(async () => {
-            console.log('🔄 Refreshing database...');
-            try {
-                const videos = await scanTelegramChannel();
-                ANIME_DATABASE = await processVideos(videos);
-                console.log('✅ Database refreshed');
-            } catch (error) {
-                console.error('❌ Refresh failed:', error.message);
-            }
-        }, 30 * 60 * 1000);
+            await refreshDatabase();
+        }, 10 * 60 * 1000); // 10 minutes
         
     } catch (error) {
         console.error('❌ Startup error:', error);
         console.error('Stack:', error.stack);
+    }
+}
+
+// ✅ NEW: Separate function for refreshing database
+async function refreshDatabase() {
+    console.log('🔄 Refreshing database...');
+    try {
+        const videos = await scanTelegramChannel();
+        ANIME_DATABASE = await processVideos(videos);
+        
+        console.log('\n' + '═'.repeat(60));
+        console.log('📊 DATABASE UPDATED');
+        console.log('═'.repeat(60));
+        console.log(`📺 Total Anime: ${ANIME_DATABASE.length}`);
+        console.log(`🎬 Total Episodes: ${ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0)}`);
+        console.log(`⏰ Last Updated: ${new Date().toLocaleString()}`);
+        console.log('═'.repeat(60) + '\n');
+        
+        return true;
+    } catch (error) {
+        console.error('❌ Refresh failed:', error.message);
+        return false;
     }
 }
 
