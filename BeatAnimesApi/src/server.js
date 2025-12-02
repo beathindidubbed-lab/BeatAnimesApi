@@ -178,6 +178,93 @@ function normalizeTitle(title) {
     return title.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Add to server.js
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+
+// ============================================
+// STREAM ENDPOINT - Using Telegram Bot API
+// ============================================
+app.get('/stream/:channel/:messageId', async (req, res) => {
+    const { channel, messageId } = req.params;
+    
+    console.log('📹 Stream request:', { channel, messageId });
+    
+    if (!BOT_TOKEN) {
+        return res.json({
+            success: false,
+            telegramUrl: `https://t.me/${channel}/${messageId}`,
+            message: 'Bot token not configured'
+        });
+    }
+    
+    try {
+        // Get chat ID
+        const chatResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${channel}`
+        );
+        const chatData = await chatResponse.json();
+        
+        if (!chatData.ok) {
+            throw new Error('Failed to get chat info');
+        }
+        
+        const chatId = chatData.result.id;
+        
+        // Get message
+        const messageResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/forwardMessage`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    from_chat_id: chatId,
+                    message_id: parseInt(messageId)
+                })
+            }
+        );
+        
+        const messageData = await messageResponse.json();
+        
+        if (!messageData.ok || !messageData.result.video) {
+            throw new Error('Video not found in message');
+        }
+        
+        const fileId = messageData.result.video.file_id;
+        
+        // Get file path
+        const fileResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`
+        );
+        const fileData = await fileResponse.json();
+        
+        if (!fileData.ok) {
+            throw new Error('Failed to get file info');
+        }
+        
+        const filePath = fileData.result.file_path;
+        const directUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+        
+        console.log('✅ Got direct URL');
+        
+        res.json({
+            success: true,
+            videoUrl: directUrl,
+            streamUrl: directUrl,
+            url: directUrl
+        });
+        
+    } catch (error) {
+        console.error('❌ Stream error:', error);
+        res.json({ 
+            success: false,
+            telegramUrl: `https://t.me/${channel}/${messageId}`,
+            message: error.message
+        });
+    }
+});
+
 // ============================================
 // TELEGRAM CHANNEL SCANNER
 // ============================================
@@ -739,3 +826,4 @@ async function startServer() {
 }
 
 startServer();
+
