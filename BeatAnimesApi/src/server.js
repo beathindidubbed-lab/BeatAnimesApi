@@ -125,37 +125,62 @@ async function searchAnilist(animeName) {
 }
 
 // ============================================
-// CAPTION PARSER - READS FROM CAPTIONS + EXTRACTS DIRECT URL (FIXED V2)
+// FIXED: parseAnimeCaption - Better URL Extraction
 // ============================================
+
 function parseAnimeCaption(captionOrFilename) {
     const originalText = captionOrFilename;
     
-    // ✅ Extract direct URL if present (supports multiple URL formats)
+    // ✅ FIXED: Better URL extraction - handle multiple formats
     let directUrl = null;
-    const urlMatch = captionOrFilename.match(/(https?:\/\/[^\s]+)/i);
-    if (urlMatch) {
-        directUrl = urlMatch[1];
-        // Remove URL from text for parsing
-        captionOrFilename = captionOrFilename.replace(urlMatch[0], '').trim();
+    
+    // Try to extract URL more carefully
+    const urlPatterns = [
+        // Standard HTTP(S) URLs
+        /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i,
+        // URLs in parentheses or brackets
+        /[\[\(](https?:\/\/[^\s<>"{}|\\^`\[\]]+)[\]\)]/i,
+        // URLs after common prefixes
+        /(?:link|url|download|watch):\s*(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i
+    ];
+    
+    for (const pattern of urlPatterns) {
+        const match = captionOrFilename.match(pattern);
+        if (match) {
+            directUrl = match[1] || match[0];
+            // Clean the URL
+            directUrl = directUrl.trim()
+                .replace(/[,;.\s]+$/, '') // Remove trailing punctuation
+                .replace(/^["'\s]+|["'\s]+$/g, ''); // Remove quotes and whitespace
+            
+            console.log(`✅ Extracted URL: "${directUrl}"`);
+            
+            // Remove URL from text for further parsing
+            captionOrFilename = captionOrFilename.replace(match[0], '').trim();
+            break;
+        }
     }
     
     console.log(`\n🔍 PARSING: "${originalText}"`);
+    if (directUrl) {
+        console.log(`   📎 Found URL: "${directUrl}"`);
+    }
     
     // Clean up the text - remove file extension
     let text = captionOrFilename.replace(/\.(mp4|mkv|avi|mov|flv)$/i, '').trim();
     console.log(`   Step 1 (remove extension): "${text}"`);
     
-    // ✅ FIX: Extract and remove quality FIRST (before title parsing)
+    // ✅ Extract and remove quality FIRST
     const qualityMatch = text.match(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/i);
     const quality = qualityMatch ? qualityMatch[1].toLowerCase() : '720p';
     text = text.replace(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/gi, '').trim();
     console.log(`   Step 2 (remove quality ${quality}): "${text}"`);
     
-    // ✅ FIX: Remove resolution indicators in brackets/parentheses
+    // ✅ Remove resolution indicators in brackets/parentheses
     text = text.replace(/[\[\(](2160p|1440p|1080p|720p|480p|360p|240p)[\]\)]/gi, '').trim();
     console.log(`   Step 3 (remove [quality]): "${text}"`);
     
-    // ✅ FIX: Extract and remove language indicators more thoroughly
+    // ✅ Extract and remove language indicators
     let language = 'Japanese';
     const langMatch = text.match(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dual audio)\b/gi);
     if (langMatch) {
@@ -168,28 +193,26 @@ function parseAnimeCaption(captionOrFilename) {
         else if (lang.includes('kannada')) language = 'Kannada';
         else if (lang.includes('dual')) language = 'Dual Audio';
     }
-    // Remove language words and their variations
     text = text.replace(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)\b/gi, '').trim();
     text = text.replace(/[\[\(](hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)[\]\)]/gi, '').trim();
     console.log(`   Step 4 (remove language ${language}): "${text}"`);
     
-    // ✅ FIX: Remove common quality/format indicators
+    // ✅ Remove common quality/format indicators
     text = text.replace(/\b(HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)\b/gi, '').trim();
     text = text.replace(/[\[\(](HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)[\]\)]/gi, '').trim();
     console.log(`   Step 5 (remove format tags): "${text}"`);
     
-    // ✅ FIX: Remove file size indicators
+    // ✅ Remove file size indicators
     text = text.replace(/\b\d+(\.\d+)?\s*(MB|GB|KB)\b/gi, '').trim();
     
-    // ✅ FIX: Remove common channel/group tags more aggressively
+    // ✅ Remove common channel/group tags
     text = text.replace(/(@\w+|#\w+)/g, '').trim();
     text = text.replace(/[\[\(]@\w+[\]\)]/g, '').trim();
     console.log(`   Step 6 (remove tags): "${text}"`);
     
     let title, season = 1, episode = 1;
     
-    // ✅ FIX: Better episode parsing patterns - MORE FLEXIBLE
-    // Pattern 1: S01E01, S1E1, S01Ep01, etc.
+    // ✅ Better episode parsing patterns
     const pattern1 = /^(.+?)\s+S(\d+)\s*E[p]?(\d+)/i;
     const match1 = text.match(pattern1);
     if (match1) {
@@ -197,10 +220,7 @@ function parseAnimeCaption(captionOrFilename) {
         season = parseInt(match1[2]);
         episode = parseInt(match1[3]);
         console.log(`✅ Matched pattern S##E##: Title="${title}" S${season}E${episode}`);
-    } 
-    // Pattern 2: Just episode format without season (Episode 01, Ep01, E01)
-    else {
-        // Remove trailing quality indicators in brackets first
+    } else {
         text = text.replace(/\s*[\[\(]\d+p[\]\)]$/i, '').trim();
         
         const pattern2 = /^(.+?)(?:\s+(?:Episode|Ep|E))?\s+(\d+)$/i;
@@ -209,9 +229,7 @@ function parseAnimeCaption(captionOrFilename) {
             title = match2[1].trim();
             episode = parseInt(match2[2]);
             console.log(`✅ Matched pattern Episode ##: Title="${title}" E${episode}`);
-        } 
-        // Pattern 3: Title - 01 or Title-01
-        else {
+        } else {
             const pattern3 = /^(.+?)\s*[-–—]\s*(\d+)$/;
             const match3 = text.match(pattern3);
             if (match3) {
@@ -219,21 +237,16 @@ function parseAnimeCaption(captionOrFilename) {
                 episode = parseInt(match3[2]);
                 console.log(`✅ Matched pattern Title-##: Title="${title}" E${episode}`);
             } else {
-                // No episode number found, use whole text as title
                 title = text.trim();
                 console.log(`⚠️ No episode pattern matched, using full text: "${title}"`);
             }
         }
     }
     
-    // ✅ FIX: More aggressive title cleanup
-    // Remove anything in brackets/parentheses
+    // ✅ Aggressive title cleanup
     title = title.replace(/[\[\(][^\[\]\(\)]*[\]\)]/g, '').trim();
-    // Remove extra spaces
     title = title.replace(/\s+/g, ' ').trim();
-    // Remove trailing dashes or underscores
     title = title.replace(/[-_\s]+$/g, '').trim();
-    // Remove leading dashes or underscores
     title = title.replace(/^[-_\s]+/g, '').trim();
     
     console.log(`   ✅ FINAL: Title="${title}" | S${season}E${episode} | ${quality} | ${language} | URL=${directUrl || 'None'}\n`);
@@ -244,111 +257,9 @@ function parseAnimeCaption(captionOrFilename) {
         episode, 
         quality, 
         language, 
-        directUrl,
+        directUrl,  // ✅ This will be properly extracted now
         rawName: originalText
     };
-}
-
-function normalizeTitle(title) {
-    return title.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-// ============================================
-// TELEGRAM CHANNEL SCANNER - READS CAPTIONS + URL MESSAGES
-// ============================================
-async function scanTelegramChannel() {
-    console.log('🔍 Scanning:', CHANNEL_USERNAME);
-    
-    try {
-        const channel = await client.getEntity(CHANNEL_USERNAME);
-        const messages = await client.getMessages(channel, { limit: 2000 });
-        
-        console.log(`📦 Found ${messages.length} messages`);
-        
-        const videoMessages = [];
-        const urlMessages = new Map(); // Store URL-only messages
-        
-        // First pass: collect all messages
-        for (const message of messages) {
-            // Check for video messages
-            if (message.media && message.media.document) {
-                const doc = message.media.document;
-                const mimeType = doc.mimeType;
-                
-                if (mimeType && (mimeType.includes('video') || mimeType.includes('matroska'))) {
-                    const attributes = doc.attributes || [];
-                    let filename = 'unknown.mp4';
-                    let duration = 0;
-                    
-                    for (const attr of attributes) {
-                        if (attr.className === 'DocumentAttributeFilename') {
-                            filename = attr.fileName;
-                        }
-                        if (attr.className === 'DocumentAttributeVideo') {
-                            duration = attr.duration;
-                        }
-                    }
-                    
-                    const caption = message.message || '';
-                    const parseSource = caption.trim() !== '' ? caption : filename;
-                    
-                    videoMessages.push({
-                        messageId: message.id,
-                        filename: filename,
-                        caption: caption,
-                        parseSource: parseSource,
-                        fileSize: doc.size,
-                        duration: duration,
-                        date: message.date,
-                    });
-                }
-            }
-            // ✅ NEW: Check for URL-only text messages
-            else if (message.message && !message.media) {
-                const text = message.message.trim();
-                const urlMatch = text.match(/(https?:\/\/[^\s]+)/i);
-                
-                if (urlMatch) {
-                    // Extract episode info from text
-                    // Format: "S01E01 https://example.com/video.mp4"
-                    // Or: "Episode 1 https://example.com/video.mp4"
-                    // Or: "E01 https://example.com/video.mp4"
-                    const epMatch = text.match(/(?:S\d+)?E[p]?(\d+)|Episode\s*(\d+)|Ep\s*(\d+)|^(\d+)/i);
-                    
-                    if (epMatch) {
-                        const episodeNum = epMatch[1] || epMatch[2] || epMatch[3] || epMatch[4];
-                        urlMessages.set(parseInt(episodeNum), {
-                            url: urlMatch[1],
-                            text: text,
-                            messageId: message.id
-                        });
-                        console.log(`📌 Found URL message for Episode ${episodeNum}: ${urlMatch[1]}`);
-                    }
-                }
-            }
-        }
-        
-        console.log(`✅ Found ${videoMessages.length} videos and ${urlMessages.size} URL messages`);
-        
-        // ✅ Second pass: Match URLs to videos by episode number
-        for (const video of videoMessages) {
-            // Parse to get episode number
-            const parsed = parseAnimeCaption(video.parseSource);
-            
-            // Check if we have a URL message for this episode
-            if (urlMessages.has(parsed.episode)) {
-                const urlData = urlMessages.get(parsed.episode);
-                video.externalUrl = urlData.url;
-                console.log(`🔗 Linked Episode ${parsed.episode} to URL: ${urlData.url}`);
-            }
-        }
-        
-        return videoMessages;
-        
-    } catch (error) {
-        console.error('❌ Scan error:', error);
-        throw error;
-    }
 }
 
 // ============================================
@@ -934,3 +845,4 @@ async function refreshDatabase() {
 }
 
 startServer();
+
