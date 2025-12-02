@@ -14,6 +14,7 @@ const API_ID = parseInt(process.env.API_ID, 10);
 const API_HASH = process.env.API_HASH || '';
 const SESSION_STRING = process.env.SESSION_STRING || ''; 
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
+const BOT_TOKEN = process.env.BOT_TOKEN; // Moved here for global scope
 
 // Validation
 if (!API_ID || isNaN(API_ID)) {
@@ -177,93 +178,6 @@ function parseAnimeFilename(filename) {
 function normalizeTitle(title) {
     return title.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
 }
-
-// Add to server.js
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-
-// ============================================
-// STREAM ENDPOINT - Using Telegram Bot API
-// ============================================
-app.get('/stream/:channel/:messageId', async (req, res) => {
-    const { channel, messageId } = req.params;
-    
-    console.log('📹 Stream request:', { channel, messageId });
-    
-    if (!BOT_TOKEN) {
-        return res.json({
-            success: false,
-            telegramUrl: `https://t.me/${channel}/${messageId}`,
-            message: 'Bot token not configured'
-        });
-    }
-    
-    try {
-        // Get chat ID
-        const chatResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${channel}`
-        );
-        const chatData = await chatResponse.json();
-        
-        if (!chatData.ok) {
-            throw new Error('Failed to get chat info');
-        }
-        
-        const chatId = chatData.result.id;
-        
-        // Get message
-        const messageResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/forwardMessage`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    from_chat_id: chatId,
-                    message_id: parseInt(messageId)
-                })
-            }
-        );
-        
-        const messageData = await messageResponse.json();
-        
-        if (!messageData.ok || !messageData.result.video) {
-            throw new Error('Video not found in message');
-        }
-        
-        const fileId = messageData.result.video.file_id;
-        
-        // Get file path
-        const fileResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`
-        );
-        const fileData = await fileResponse.json();
-        
-        if (!fileData.ok) {
-            throw new Error('Failed to get file info');
-        }
-        
-        const filePath = fileData.result.file_path;
-        const directUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
-        
-        console.log('✅ Got direct URL');
-        
-        res.json({
-            success: true,
-            videoUrl: directUrl,
-            streamUrl: directUrl,
-            url: directUrl
-        });
-        
-    } catch (error) {
-        console.error('❌ Stream error:', error);
-        res.json({ 
-            success: false,
-            telegramUrl: `https://t.me/${channel}/${messageId}`,
-            message: error.message
-        });
-    }
-}),
 
 // ============================================
 // TELEGRAM CHANNEL SCANNER
@@ -614,7 +528,7 @@ function getEpisodeInfo(episodeId) {
     
     if (!episodeData) {
         console.error('❌ Episode not found:', episodeNum);
-        console.log('📋 Available episodes:', anime.seasons[0]?.episodes.map(e => e.episode));
+        console.log('📋 Available episodes:', anime.seasons.flatMap(s => s.episodes).map(e => e.episode));
         return { results: null };
     }
     
@@ -654,6 +568,7 @@ app.get('/', (req, res) => {
             episode: '/episode/:id',
             recent: '/recent/:page',
             trending: '/trending/:page',
+            stream: '/stream/:channel/:messageId', // Added stream to endpoints list
             debug: '/debug/anime/:id',
             ping: '/ping'
         },
@@ -718,47 +633,112 @@ app.get('/trending/:page', (req, res) => {
 });
 
 // ============================================
-// DEBUG ROUTE
-// ============================================
-// ============================================
-// STREAM ENDPOINT - Get direct video URL
+// STREAM ENDPOINT - Get direct video URL via BOT API (Original Attempt)
+// This is the first /stream endpoint defined in the original file.
+// It is kept as the final, functional stream endpoint because the second one 
+// relies on the `telethon` client's downloadMedia which is not suitable for 
+// a real-time streaming endpoint (it returns a buffer, not a link).
 // ============================================
 app.get('/stream/:channel/:messageId', async (req, res) => {
     const { channel, messageId } = req.params;
     
-    console.log('📹 Stream request:', { channel, messageId });
+    console.log('📹 Stream request (Bot API):', { channel, messageId });
     
-    try {
-        // Get message from Telegram
-        const channelEntity = await client.getEntity(`@${channel}`);
-        const message = await client.getMessage(channelEntity, { ids: parseInt(messageId) });
-        
-        if (!message || !message.media || !message.media.document) {
-            throw new Error('Video not found');
-        }
-        
-        // Get download link
-        const buffer = await client.downloadMedia(message.media, {
-            workers: 1,
-        });
-        
-        // For now, we can't stream directly from Telegram easily
-        // Return the Telegram link instead
-        res.json({
+    if (!BOT_TOKEN) {
+        return res.json({
             success: false,
             telegramUrl: `https://t.me/${channel}/${messageId}`,
-            message: 'Direct streaming not available. Use Telegram link.'
+            message: 'Bot token not configured'
+        });
+    }
+    
+    try {
+        // Step 1: Get chat ID
+        const chatResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${channel}`
+        );
+        const chatData = await chatResponse.json();
+        
+        if (!chatData.ok) {
+            throw new Error('Failed to get chat info');
+        }
+        
+        const chatId = chatData.result.id;
+        
+        // Step 2: Forward message to get file_id (or just get message)
+        // Using getMessage is usually enough if the bot is in the channel and has access
+        const messageResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getChatHistory?chat_id=@${channel}&limit=1&offset_id=${parseInt(messageId) + 1}`
+        );
+        
+        const messageData = await messageResponse.json();
+        const messageResult = messageData.ok && messageData.result.length > 0 ? 
+                              messageData.result.find(m => m.message_id === parseInt(messageId)) : 
+                              null;
+        
+        if (!messageResult || !messageResult.video) {
+            // Fallback for private channels (can't use getChatHistory easily)
+            // The original logic used forwardMessage which can be problematic/spammy.
+            // Reverting to the simpler, though less robust, video check:
+            const singleMessageResponse = await fetch(
+                `https://api.telegram.org/bot${BOT_TOKEN}/forwardMessage`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: chatId,
+                        from_chat_id: chatId,
+                        message_id: parseInt(messageId)
+                    })
+                }
+            );
+            const singleMessageData = await singleMessageResponse.json();
+            
+            if (!singleMessageData.ok || !singleMessageData.result.video) {
+                 throw new Error('Video not found in message (or bot access failed)');
+            }
+            var fileId = singleMessageData.result.video.file_id;
+        } else {
+            var fileId = messageResult.video.file_id;
+        }
+
+        
+        // Step 3: Get file path
+        const fileResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`
+        );
+        const fileData = await fileResponse.json();
+        
+        if (!fileData.ok) {
+            throw new Error('Failed to get file info');
+        }
+        
+        const filePath = fileData.result.file_path;
+        const directUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+        
+        console.log('✅ Got direct URL');
+        
+        res.json({
+            success: true,
+            videoUrl: directUrl,
+            streamUrl: directUrl,
+            url: directUrl
         });
         
     } catch (error) {
         console.error('❌ Stream error:', error);
         res.status(500).json({ 
-            error: 'Failed to get video stream',
-            telegramUrl: `https://t.me/${channel}/${messageId}`
+            success: false,
+            telegramUrl: `https://t.me/${channel}/${messageId}`,
+            message: error.message || 'An unknown error occurred during streaming.'
         });
     }
 });
 
+
+// ============================================
+// DEBUG ROUTE
+// ============================================
 app.get('/debug/anime/:id', (req, res) => {
     const animeId = req.params.id;
     
@@ -821,7 +801,9 @@ async function startServer() {
         console.log('📱 Connecting to Telegram...');
         
         if (!SESSION_STRING) {
-            throw new Error('SESSION_STRING is required!');
+            // Keep server alive, but don't try to connect to Telegram
+            console.log('⚠️ SESSION_STRING is missing. Running in API-only mode (database will be empty).');
+            return; 
         }
 
         await client.connect();
@@ -865,5 +847,3 @@ async function startServer() {
 }
 
 startServer();
-
-
