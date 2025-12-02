@@ -125,7 +125,7 @@ async function searchAnilist(animeName) {
 }
 
 // ============================================
-// CAPTION PARSER - READS FROM CAPTIONS + EXTRACTS DIRECT URL
+// CAPTION PARSER - READS FROM CAPTIONS + EXTRACTS DIRECT URL (FIXED)
 // ============================================
 function parseAnimeCaption(captionOrFilename) {
     // ✅ Extract direct URL if present (supports multiple URL formats)
@@ -137,15 +137,18 @@ function parseAnimeCaption(captionOrFilename) {
         captionOrFilename = captionOrFilename.replace(urlMatch[0], '').trim();
     }
     
-    // Clean up the text
+    // Clean up the text - remove file extension
     let text = captionOrFilename.replace(/\.(mp4|mkv|avi|mov|flv)$/i, '').trim();
     
-    // Extract quality
+    // ✅ FIX: Extract and remove quality FIRST (before title parsing)
     const qualityMatch = text.match(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/i);
     const quality = qualityMatch ? qualityMatch[1].toLowerCase() : '720p';
     text = text.replace(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/gi, '').trim();
     
-    // Extract language
+    // ✅ FIX: Remove resolution indicators in brackets/parentheses
+    text = text.replace(/[\[\(](2160p|1440p|1080p|720p|480p|360p|240p)[\]\)]/gi, '').trim();
+    
+    // ✅ FIX: Extract and remove language indicators more thoroughly
     let language = 'Japanese';
     const langMatch = text.match(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dual audio)\b/gi);
     if (langMatch) {
@@ -158,13 +161,25 @@ function parseAnimeCaption(captionOrFilename) {
         else if (lang.includes('kannada')) language = 'Kannada';
         else if (lang.includes('dual')) language = 'Dual Audio';
     }
-    text = text.replace(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|sub|subbed|dual audio)\b/gi, '').trim();
-    text = text.replace(/\[(hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|sub|subbed|dual audio)\]/gi, '').trim();
+    // Remove language words and their variations
+    text = text.replace(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)\b/gi, '').trim();
+    text = text.replace(/[\[\(](hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)[\]\)]/gi, '').trim();
+    
+    // ✅ FIX: Remove common quality/format indicators
+    text = text.replace(/\b(HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)\b/gi, '').trim();
+    text = text.replace(/[\[\(](HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)[\]\)]/gi, '').trim();
+    
+    // ✅ FIX: Remove file size indicators
+    text = text.replace(/\b\d+(\.\d+)?\s*(MB|GB|KB)\b/gi, '').trim();
+    
+    // ✅ FIX: Remove common channel/group tags more aggressively
+    text = text.replace(/(@\w+|#\w+)/g, '').trim();
+    text = text.replace(/[\[\(]@\w+[\]\)]/g, '').trim();
     
     let title, season = 1, episode = 1;
     
-    // Try different episode patterns
-    // Pattern 1: S01E01 or S1E1
+    // ✅ FIX: Better episode parsing patterns
+    // Pattern 1: S01E01 or S1E1 (most reliable)
     const pattern1 = /^(.+?)\s+S(\d+)\s*E(\d+)/i;
     const match1 = text.match(pattern1);
     if (match1) {
@@ -172,15 +187,19 @@ function parseAnimeCaption(captionOrFilename) {
         season = parseInt(match1[2]);
         episode = parseInt(match1[3]);
     } 
-    // Pattern 2: Episode 01 or Ep 01 or E01
+    // Pattern 2: [48p] or similar at the end (remove it)
     else {
+        // Remove trailing quality indicators in brackets
+        text = text.replace(/\s*[\[\(]\d+p[\]\)]$/i, '').trim();
+        
+        // Pattern 3: Episode 01, Ep 01, E01, or just 01 at the end
         const pattern2 = /^(.+?)(?:\s+(?:Episode|Ep|E))?\s+(\d+)$/i;
         const match2 = text.match(pattern2);
         if (match2) {
             title = match2[1].trim();
             episode = parseInt(match2[2]);
         } 
-        // Pattern 3: Title - 01
+        // Pattern 4: Title - 01 or Title-01
         else {
             const pattern3 = /^(.+?)\s*[-–—]\s*(\d+)$/;
             const match3 = text.match(pattern3);
@@ -188,18 +207,21 @@ function parseAnimeCaption(captionOrFilename) {
                 title = match3[1].trim();
                 episode = parseInt(match3[2]);
             } else {
+                // No episode number found, use whole text as title
                 title = text.trim();
             }
         }
     }
     
-    // Clean up title
-    title = title.replace(/\[.*?\]/g, '').trim();
-    title = title.replace(/\(.*?\)/g, '').trim();
+    // ✅ FIX: More aggressive title cleanup
+    // Remove anything in brackets/parentheses
+    title = title.replace(/[\[\(][^\[\]\(\)]*[\]\)]/g, '').trim();
+    // Remove extra spaces
     title = title.replace(/\s+/g, ' ').trim();
-    
-    // Remove common file sharing group names
-    title = title.replace(/(@\w+|#\w+)/g, '').trim();
+    // Remove trailing dashes or underscores
+    title = title.replace(/[-_\s]+$/g, '').trim();
+    // Remove leading dashes or underscores
+    title = title.replace(/^[-_\s]+/g, '').trim();
     
     return { 
         title, 
@@ -289,7 +311,13 @@ async function processVideos(videoMessages) {
         const parsed = parseAnimeCaption(video.parseSource);
         const normalizedTitle = normalizeTitle(parsed.title);
         
-        console.log(`📝 Parsed: "${video.parseSource}" → ${parsed.title} S${parsed.season}E${parsed.episode} (${parsed.quality} ${parsed.language})`);
+        // ✅ DEBUG: Show what's being parsed
+        console.log(`📝 Raw: "${video.parseSource}"`);
+        console.log(`   → Title: "${parsed.title}"`);
+        console.log(`   → Normalized: "${normalizedTitle}"`);
+        console.log(`   → S${parsed.season}E${parsed.episode} | ${parsed.quality} | ${parsed.language}`);
+        console.log(`   → Direct URL: ${parsed.directUrl || 'None'}`);
+        console.log('---');
         
         if (!animeMap.has(normalizedTitle)) {
             const anilistData = await searchAnilist(parsed.title);
