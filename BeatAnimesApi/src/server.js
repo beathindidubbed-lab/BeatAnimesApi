@@ -125,9 +125,18 @@ async function searchAnilist(animeName) {
 }
 
 // ============================================
-// CAPTION PARSER - READS FROM CAPTIONS
+// CAPTION PARSER - READS FROM CAPTIONS + EXTRACTS DIRECT URL
 // ============================================
 function parseAnimeCaption(captionOrFilename) {
+    // ✅ Extract direct URL if present (supports multiple URL formats)
+    let directUrl = null;
+    const urlMatch = captionOrFilename.match(/(https?:\/\/[^\s]+)/i);
+    if (urlMatch) {
+        directUrl = urlMatch[1];
+        // Remove URL from text for parsing
+        captionOrFilename = captionOrFilename.replace(urlMatch[0], '').trim();
+    }
+    
     // Clean up the text
     let text = captionOrFilename.replace(/\.(mp4|mkv|avi|mov|flv)$/i, '').trim();
     
@@ -198,6 +207,7 @@ function parseAnimeCaption(captionOrFilename) {
         episode, 
         quality, 
         language, 
+        directUrl,  // ✅ Added direct URL
         rawName: captionOrFilename 
     };
 }
@@ -327,11 +337,12 @@ async function processVideos(videoMessages) {
             messageId: video.messageId,
             filename: video.filename,
             caption: video.caption,
+            directUrl: parsed.directUrl,  // ✅ Store direct URL if found
             fileSize: video.fileSize,
             duration: video.duration,
             date: video.date,
             channelName: channelName,
-            videoUrl: `${channelName}/${video.messageId}`
+            videoUrl: parsed.directUrl || `${channelName}/${video.messageId}`  // ✅ Use direct URL if available
         });
     }
     
