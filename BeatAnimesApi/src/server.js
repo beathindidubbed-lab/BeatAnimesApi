@@ -720,6 +720,45 @@ app.get('/trending/:page', (req, res) => {
 // ============================================
 // DEBUG ROUTE
 // ============================================
+// ============================================
+// STREAM ENDPOINT - Get direct video URL
+// ============================================
+app.get('/stream/:channel/:messageId', async (req, res) => {
+    const { channel, messageId } = req.params;
+    
+    console.log('📹 Stream request:', { channel, messageId });
+    
+    try {
+        // Get message from Telegram
+        const channelEntity = await client.getEntity(`@${channel}`);
+        const message = await client.getMessage(channelEntity, { ids: parseInt(messageId) });
+        
+        if (!message || !message.media || !message.media.document) {
+            throw new Error('Video not found');
+        }
+        
+        // Get download link
+        const buffer = await client.downloadMedia(message.media, {
+            workers: 1,
+        });
+        
+        // For now, we can't stream directly from Telegram easily
+        // Return the Telegram link instead
+        res.json({
+            success: false,
+            telegramUrl: `https://t.me/${channel}/${messageId}`,
+            message: 'Direct streaming not available. Use Telegram link.'
+        });
+        
+    } catch (error) {
+        console.error('❌ Stream error:', error);
+        res.status(500).json({ 
+            error: 'Failed to get video stream',
+            telegramUrl: `https://t.me/${channel}/${messageId}`
+        });
+    }
+});
+
 app.get('/debug/anime/:id', (req, res) => {
     const animeId = req.params.id;
     
@@ -826,4 +865,3 @@ async function startServer() {
 }
 
 startServer();
-
