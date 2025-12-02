@@ -263,7 +263,7 @@ app.get('/stream/:channel/:messageId', async (req, res) => {
             message: error.message
         });
     }
-}
+}),
 
 // ============================================
 // TELEGRAM CHANNEL SCANNER
@@ -865,4 +865,5 @@ async function startServer() {
 }
 
 startServer();
+
 
