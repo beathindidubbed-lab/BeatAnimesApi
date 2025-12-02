@@ -125,22 +125,99 @@ async function searchAnilist(animeName) {
 }
 
 // ============================================
+// HELPER FUNCTIONS (PREVIOUSLY MISSING!)
+// ============================================
+function normalizeTitle(title) {
+    return title
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+async function scanTelegramChannel() {
+    console.log('📡 Scanning Telegram channel...');
+    
+    const videos = [];
+    
+    try {
+        const channel = await client.getEntity(CHANNEL_USERNAME);
+        console.log(`✅ Found channel: ${channel.title || CHANNEL_USERNAME}`);
+        
+        const messages = await client.getMessages(channel, {
+            limit: 500
+        });
+        
+        console.log(`📬 Found ${messages.length} messages`);
+        
+        let lastTextMessage = null;
+        
+        for (const message of messages) {
+            if (message.message && !message.video && !message.document) {
+                lastTextMessage = message.message;
+                continue;
+            }
+            
+            if (message.video || (message.document && message.document.mimeType?.startsWith('video/'))) {
+                const video = message.video || message.document;
+                
+                let filename = '';
+                if (video.attributes) {
+                    for (const attr of video.attributes) {
+                        if (attr.fileName) {
+                            filename = attr.fileName;
+                            break;
+                        }
+                    }
+                }
+                
+                const caption = message.message || '';
+                const parseSource = caption || filename || 'Unknown';
+                
+                let externalUrl = null;
+                if (lastTextMessage) {
+                    const urlMatch = lastTextMessage.match(/(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i);
+                    if (urlMatch) {
+                        externalUrl = urlMatch[1];
+                    }
+                }
+                
+                videos.push({
+                    messageId: message.id,
+                    filename: filename,
+                    caption: caption,
+                    parseSource: parseSource,
+                    externalUrl: externalUrl,
+                    fileSize: video.size || 0,
+                    duration: video.attributes?.find(a => a.duration)?.duration || 0,
+                    date: message.date
+                });
+                
+                lastTextMessage = null;
+            }
+        }
+        
+        console.log(`🎬 Found ${videos.length} videos`);
+        return videos;
+        
+    } catch (error) {
+        console.error('❌ Channel scan error:', error.message);
+        throw error;
+    }
+}
+
+// ============================================
 // FIXED: parseAnimeCaption - Better URL Extraction
 // ============================================
 
 function parseAnimeCaption(captionOrFilename) {
     const originalText = captionOrFilename;
     
-    // ✅ FIXED: Better URL extraction - handle multiple formats
     let directUrl = null;
     
-    // Try to extract URL more carefully
     const urlPatterns = [
-        // Standard HTTP(S) URLs
         /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i,
-        // URLs in parentheses or brackets
         /[\[\(](https?:\/\/[^\s<>"{}|\\^`\[\]]+)[\]\)]/i,
-        // URLs after common prefixes
         /(?:link|url|download|watch):\s*(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i
     ];
     
@@ -148,14 +225,12 @@ function parseAnimeCaption(captionOrFilename) {
         const match = captionOrFilename.match(pattern);
         if (match) {
             directUrl = match[1] || match[0];
-            // Clean the URL
             directUrl = directUrl.trim()
-                .replace(/[,;.\s]+$/, '') // Remove trailing punctuation
-                .replace(/^["'\s]+|["'\s]+$/g, ''); // Remove quotes and whitespace
+                .replace(/[,;.\s]+$/, '')
+                .replace(/^["'\s]+|["'\s]+$/g, '');
             
             console.log(`✅ Extracted URL: "${directUrl}"`);
             
-            // Remove URL from text for further parsing
             captionOrFilename = captionOrFilename.replace(match[0], '').trim();
             break;
         }
@@ -166,21 +241,17 @@ function parseAnimeCaption(captionOrFilename) {
         console.log(`   📎 Found URL: "${directUrl}"`);
     }
     
-    // Clean up the text - remove file extension
     let text = captionOrFilename.replace(/\.(mp4|mkv|avi|mov|flv)$/i, '').trim();
     console.log(`   Step 1 (remove extension): "${text}"`);
     
-    // ✅ Extract and remove quality FIRST
     const qualityMatch = text.match(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/i);
     const quality = qualityMatch ? qualityMatch[1].toLowerCase() : '720p';
     text = text.replace(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/gi, '').trim();
     console.log(`   Step 2 (remove quality ${quality}): "${text}"`);
     
-    // ✅ Remove resolution indicators in brackets/parentheses
     text = text.replace(/[\[\(](2160p|1440p|1080p|720p|480p|360p|240p)[\]\)]/gi, '').trim();
     console.log(`   Step 3 (remove [quality]): "${text}"`);
     
-    // ✅ Extract and remove language indicators
     let language = 'Japanese';
     const langMatch = text.match(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dual audio)\b/gi);
     if (langMatch) {
@@ -197,22 +268,18 @@ function parseAnimeCaption(captionOrFilename) {
     text = text.replace(/[\[\(](hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)[\]\)]/gi, '').trim();
     console.log(`   Step 4 (remove language ${language}): "${text}"`);
     
-    // ✅ Remove common quality/format indicators
     text = text.replace(/\b(HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)\b/gi, '').trim();
     text = text.replace(/[\[\(](HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)[\]\)]/gi, '').trim();
     console.log(`   Step 5 (remove format tags): "${text}"`);
     
-    // ✅ Remove file size indicators
     text = text.replace(/\b\d+(\.\d+)?\s*(MB|GB|KB)\b/gi, '').trim();
     
-    // ✅ Remove common channel/group tags
     text = text.replace(/(@\w+|#\w+)/g, '').trim();
     text = text.replace(/[\[\(]@\w+[\]\)]/g, '').trim();
     console.log(`   Step 6 (remove tags): "${text}"`);
     
     let title, season = 1, episode = 1;
     
-    // ✅ Better episode parsing patterns
     const pattern1 = /^(.+?)\s+S(\d+)\s*E[p]?(\d+)/i;
     const match1 = text.match(pattern1);
     if (match1) {
@@ -243,7 +310,6 @@ function parseAnimeCaption(captionOrFilename) {
         }
     }
     
-    // ✅ Aggressive title cleanup
     title = title.replace(/[\[\(][^\[\]\(\)]*[\]\)]/g, '').trim();
     title = title.replace(/\s+/g, ' ').trim();
     title = title.replace(/[-_\s]+$/g, '').trim();
@@ -257,7 +323,7 @@ function parseAnimeCaption(captionOrFilename) {
         episode, 
         quality, 
         language, 
-        directUrl,  // ✅ This will be properly extracted now
+        directUrl,
         rawName: originalText
     };
 }
@@ -272,11 +338,9 @@ async function processVideos(videoMessages) {
     const channelName = CHANNEL_USERNAME.replace('@', '');
     
     for (const video of videoMessages) {
-        // ✅ Parse from caption/parseSource instead of filename
         const parsed = parseAnimeCaption(video.parseSource);
         const normalizedTitle = normalizeTitle(parsed.title);
         
-        // ✅ DEBUG: Show what's being parsed
         console.log(`📝 Raw: "${video.parseSource}"`);
         console.log(`   → Title: "${parsed.title}"`);
         console.log(`   → Normalized: "${normalizedTitle}"`);
@@ -324,7 +388,6 @@ async function processVideos(videoMessages) {
         
         const episode = season.episodes.get(parsed.episode);
         
-        // ✅ Prioritize external URL from separate message
         const finalDirectUrl = video.externalUrl || parsed.directUrl;
         
         episode.variants.push({
@@ -333,12 +396,12 @@ async function processVideos(videoMessages) {
             messageId: video.messageId,
             filename: video.filename,
             caption: video.caption,
-            directUrl: finalDirectUrl,  // ✅ Use external URL if available
+            directUrl: finalDirectUrl,
             fileSize: video.fileSize,
             duration: video.duration,
             date: video.date,
             channelName: channelName,
-            videoUrl: finalDirectUrl || `${channelName}/${video.messageId}`  // ✅ Prioritize direct URL
+            videoUrl: finalDirectUrl || `${channelName}/${video.messageId}`
         });
     }
     
@@ -571,7 +634,6 @@ app.get('/ping', (req, res) => {
     });
 });
 
-// ✅ NEW: Manual refresh endpoint
 app.post('/refresh', async (req, res) => {
     console.log('📡 Manual refresh requested');
     
@@ -593,11 +655,9 @@ app.post('/refresh', async (req, res) => {
     });
 });
 
-// ✅ NEW: Webhook endpoint for auto-refresh on new messages
 app.post('/webhook', async (req, res) => {
     console.log('📡 Webhook received');
     
-    // Verify webhook (optional - add your secret token)
     const token = req.headers['x-telegram-token'];
     if (token !== process.env.WEBHOOK_TOKEN) {
         res.status(401).json({ error: 'Unauthorized' });
@@ -808,13 +868,11 @@ async function startServer() {
         await client.connect();
         console.log('✅ Telegram connected!\n');
         
-        // ✅ Initial scan
         await refreshDatabase();
         
-        // ✅ Auto-refresh every 10 minutes (reduced from 30)
         setInterval(async () => {
             await refreshDatabase();
-        }, 10 * 60 * 1000); // 10 minutes
+        }, 10 * 60 * 1000);
         
     } catch (error) {
         console.error('❌ Startup error:', error);
@@ -822,7 +880,6 @@ async function startServer() {
     }
 }
 
-// ✅ NEW: Separate function for refreshing database
 async function refreshDatabase() {
     console.log('🔄 Refreshing database...');
     try {
@@ -845,4 +902,3 @@ async function refreshDatabase() {
 }
 
 startServer();
-
