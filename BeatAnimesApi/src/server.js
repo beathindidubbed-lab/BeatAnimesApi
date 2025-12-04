@@ -1,6 +1,4 @@
-// ============================================
-// TELEGRAM SCRAPER - CAPTION-BASED VERSION
-// ============================================
+// BeatAnimesApi/src/server.js - FIXED VERSION WITH MOVIE/OVA SUPPORT
 
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
@@ -16,7 +14,6 @@ const SESSION_STRING = process.env.SESSION_STRING || '';
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// Validation
 if (!API_ID || isNaN(API_ID)) {
     console.error('❌ API_ID must be a valid integer');
     process.exit(1);
@@ -28,9 +25,7 @@ if (!API_HASH) {
 }
 
 console.log(`✅ Configuration loaded:`);
-console.log(`   API_ID: ${API_ID} (type: ${typeof API_ID})`);
-console.log(`   API_HASH: ${API_HASH.substring(0, 5)}...`);
-console.log(`   Session: ${SESSION_STRING ? 'Found' : 'Empty (first run)'}`);
+console.log(`   API_ID: ${API_ID}`);
 console.log(`   Channel: ${CHANNEL_USERNAME}\n`);
 
 // ============================================
@@ -125,7 +120,7 @@ async function searchAnilist(animeName) {
 }
 
 // ============================================
-// HELPER FUNCTIONS (PREVIOUSLY MISSING!)
+// HELPER FUNCTIONS
 // ============================================
 function normalizeTitle(title) {
     return title
@@ -207,7 +202,7 @@ async function scanTelegramChannel() {
 }
 
 // ============================================
-// FIXED: parseAnimeCaption - Better URL Extraction
+// FIXED: Enhanced Caption Parser - Support Movies/OVA/Specials
 // ============================================
 
 function parseAnimeCaption(captionOrFilename) {
@@ -273,39 +268,58 @@ function parseAnimeCaption(captionOrFilename) {
     console.log(`   Step 5 (remove format tags): "${text}"`);
     
     text = text.replace(/\b\d+(\.\d+)?\s*(MB|GB|KB)\b/gi, '').trim();
-    
     text = text.replace(/(@\w+|#\w+)/g, '').trim();
     text = text.replace(/[\[\(]@\w+[\]\)]/g, '').trim();
     console.log(`   Step 6 (remove tags): "${text}"`);
     
+    // ✅ NEW: Check for content type keywords
+    const contentTypeMatch = text.match(/\b(movie|ova|ona|special|recap)\b/i);
+    let contentType = 'EPISODE';
+    if (contentTypeMatch) {
+        contentType = contentTypeMatch[1].toUpperCase();
+        text = text.replace(/\b(movie|ova|ona|special|recap)\b/gi, '').trim();
+        console.log(`   ✅ Detected content type: ${contentType}`);
+    }
+    
     let title, season = 1, episode = 1;
     
+    // ✅ Pattern 1: S##E## format
     const pattern1 = /^(.+?)\s+S(\d+)\s*E[p]?(\d+)/i;
     const match1 = text.match(pattern1);
     if (match1) {
         title = match1[1].trim();
         season = parseInt(match1[2]);
         episode = parseInt(match1[3]);
-        console.log(`✅ Matched pattern S##E##: Title="${title}" S${season}E${episode}`);
+        console.log(`✅ Matched S##E##: Title="${title}" S${season}E${episode}`);
     } else {
         text = text.replace(/\s*[\[\(]\d+p[\]\)]$/i, '').trim();
         
+        // ✅ Pattern 2: Episode ## format
         const pattern2 = /^(.+?)(?:\s+(?:Episode|Ep|E))?\s+(\d+)$/i;
         const match2 = text.match(pattern2);
         if (match2) {
             title = match2[1].trim();
             episode = parseInt(match2[2]);
-            console.log(`✅ Matched pattern Episode ##: Title="${title}" E${episode}`);
+            console.log(`✅ Matched Episode ##: Title="${title}" E${episode}`);
         } else {
+            // ✅ Pattern 3: Title-## format
             const pattern3 = /^(.+?)\s*[-–—]\s*(\d+)$/;
             const match3 = text.match(pattern3);
             if (match3) {
                 title = match3[1].trim();
                 episode = parseInt(match3[2]);
-                console.log(`✅ Matched pattern Title-##: Title="${title}" E${episode}`);
+                console.log(`✅ Matched Title-##: Title="${title}" E${episode}`);
             } else {
+                // ✅ NEW: If it's a movie/OVA/special, use full text as title
                 title = text.trim();
-                console.log(`⚠️ No episode pattern matched, using full text: "${title}"`);
+                
+                // For movies, set episode to 0 to indicate standalone content
+                if (contentType === 'MOVIE' || contentType === 'OVA' || contentType === 'SPECIAL') {
+                    episode = 0;
+                    console.log(`✅ ${contentType} detected: Title="${title}"`);
+                } else {
+                    console.log(`⚠️ No pattern matched, using full text: "${title}"`);
+                }
             }
         }
     }
@@ -315,7 +329,7 @@ function parseAnimeCaption(captionOrFilename) {
     title = title.replace(/[-_\s]+$/g, '').trim();
     title = title.replace(/^[-_\s]+/g, '').trim();
     
-    console.log(`   ✅ FINAL: Title="${title}" | S${season}E${episode} | ${quality} | ${language} | URL=${directUrl || 'None'}\n`);
+    console.log(`   ✅ FINAL: Title="${title}" | Type=${contentType} | S${season}E${episode} | ${quality} | ${language} | URL=${directUrl || 'None'}\n`);
     
     return { 
         title, 
@@ -324,12 +338,13 @@ function parseAnimeCaption(captionOrFilename) {
         quality, 
         language, 
         directUrl,
-        rawName: originalText
+        rawName: originalText,
+        contentType  // ✅ NEW: Track content type
     };
 }
 
 // ============================================
-// VIDEO PROCESSOR - USES CAPTION PARSER
+// VIDEO PROCESSOR - ENHANCED FOR MOVIES/OVA
 // ============================================
 async function processVideos(videoMessages) {
     console.log('🔧 Processing videos...');
@@ -343,6 +358,7 @@ async function processVideos(videoMessages) {
         
         console.log(`📝 Raw: "${video.parseSource}"`);
         console.log(`   → Title: "${parsed.title}"`);
+        console.log(`   → Type: ${parsed.contentType}`);
         console.log(`   → Normalized: "${normalizedTitle}"`);
         console.log(`   → S${parsed.season}E${parsed.episode} | ${parsed.quality} | ${parsed.language}`);
         console.log(`   → Direct URL: ${parsed.directUrl || 'None'}`);
@@ -359,7 +375,8 @@ async function processVideos(videoMessages) {
                 totalEpisodes: 0,
                 availableLanguages: new Set(),
                 availableQualities: new Set(),
-                seasons: new Map()
+                seasons: new Map(),
+                contentType: parsed.contentType  // ✅ NEW
             });
             
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -401,7 +418,8 @@ async function processVideos(videoMessages) {
             duration: video.duration,
             date: video.date,
             channelName: channelName,
-            videoUrl: finalDirectUrl || `${channelName}/${video.messageId}`
+            videoUrl: finalDirectUrl || `${channelName}/${video.messageId}`,
+            contentType: parsed.contentType  // ✅ NEW
         });
     }
     
@@ -492,6 +510,9 @@ function formatAnimeForList(anime) {
         id: anime.id,
         title: anime.title,
         image: anilist?.image || `https://via.placeholder.com/300x400?text=${encodeURIComponent(anime.title)}`,
+        banner: anilist?.banner || anilist?.image,  // ✅ NEW: Include banner
+        bannerImage: anilist?.banner,                // ✅ NEW: Explicit banner
+        coverImage: anilist?.image,                  // ✅ NEW: Explicit cover
         releaseDate: anilist?.year || new Date().getFullYear(),
         status: anilist?.status || 'Available',
         genres: anilist?.genres || [],
@@ -538,10 +559,19 @@ function getAnimeDetails(animeId) {
     
     for (const season of anime.seasons) {
         for (const ep of season.episodes) {
-            episodes.push([
-                ep.episode.toString(),
-                `${anime.id}-episode-${ep.episode}`
-            ]);
+            // ✅ Handle both episodes and movies/OVA
+            if (ep.episode === 0) {
+                // It's a movie/OVA/special
+                episodes.push([
+                    "Movie",
+                    `${anime.id}-episode-0`
+                ]);
+            } else {
+                episodes.push([
+                    ep.episode.toString(),
+                    `${anime.id}-episode-${ep.episode}`
+                ]);
+            }
         }
     }
     
@@ -610,9 +640,14 @@ function getEpisodeInfo(episodeId) {
         return { results: null };
     }
     
+    // ✅ Handle movie/OVA naming
+    let displayName = episodeNum === 0 
+        ? `${anime.title} - Movie` 
+        : `${anime.title} - Episode ${episodeNum}`;
+    
     return {
         results: {
-            name: `${anime.title} - Episode ${episodeNum}`,
+            name: displayName,
             variants: episodeData.variants,
         }
     };
@@ -653,20 +688,6 @@ app.post('/refresh', async (req, res) => {
         totalEpisodes: ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0),
         timestamp: new Date().toISOString()
     });
-});
-
-app.post('/webhook', async (req, res) => {
-    console.log('📡 Webhook received');
-    
-    const token = req.headers['x-telegram-token'];
-    if (token !== process.env.WEBHOOK_TOKEN) {
-        res.status(401).json({ error: 'Unauthorized' });
-        return;
-    }
-    
-    await refreshDatabase();
-    
-    res.json({ success: true });
 });
 
 app.get('/', (req, res) => {
@@ -848,10 +869,10 @@ app.get('/debug/anime/:id', (req, res) => {
 });
 
 // ============================================
-// MAIN STARTUP + AUTO-REFRESH + MANUAL REFRESH
+// MAIN STARTUP
 // ============================================
 async function startServer() {
-    console.log('🚀 Starting Telegram Scraper (Caption-based)...\n');
+    console.log('🚀 Starting Telegram Scraper...\n');
     
     try {
         const PORT = process.env.PORT || 3000;
@@ -860,7 +881,7 @@ async function startServer() {
         });
 
         if (!SESSION_STRING) {
-            console.log('⚠️ SESSION_STRING is missing. Running in API-only mode.');
+            console.log('⚠️ SESSION_STRING missing. API-only mode.');
             return; 
         }
 
