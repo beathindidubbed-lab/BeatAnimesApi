@@ -868,6 +868,68 @@ app.get('/debug/anime/:id', (req, res) => {
     });
 });
 // Fixed /stream endpoint with better error handling
+// ============================================
+// MEGA URL TO DIRECT STREAM CONVERTER
+// ============================================
+app.get('/mega-stream', async (req, res) => {
+    const megaUrl = req.query.url;
+    
+    if (!megaUrl || (!megaUrl.includes('mega.nz') && !megaUrl.includes('mega.co.nz'))) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Invalid MEGA URL' 
+        });
+    }
+    
+    try {
+        // Extract file ID from MEGA URL
+        let fileId, key;
+        
+        // Handle different MEGA URL formats
+        // Format 1: https://mega.nz/file/XXXXX#YYYYY
+        // Format 2: https://mega.nz/#!XXXXX!YYYYY
+        
+        if (megaUrl.includes('/file/')) {
+            const match = megaUrl.match(/\/file\/([^#]+)#(.+)/);
+            if (match) {
+                fileId = match[1];
+                key = match[2];
+            }
+        } else if (megaUrl.includes('#!')) {
+            const match = megaUrl.match(/#!([^!]+)!(.+)/);
+            if (match) {
+                fileId = match[1];
+                key = match[2];
+            }
+        }
+        
+        if (!fileId || !key) {
+            throw new Error('Could not parse MEGA URL');
+        }
+        
+        // Use MEGA API proxy service
+        // Option 1: Use public MEGA proxy (if available)
+        const proxyUrl = `https://mega-proxy.herokuapp.com/stream?id=${fileId}&key=${key}`;
+        
+        // Option 2: Use MEGAcmd API
+        // const streamUrl = await getMegaDirectLink(fileId, key);
+        
+        res.json({
+            success: true,
+            streamUrl: proxyUrl,
+            originalUrl: megaUrl,
+            type: 'mega'
+        });
+        
+    } catch (error) {
+        console.error('❌ MEGA stream error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message,
+            fallbackUrl: megaUrl
+        });
+    }
+});
 
 app.get('/stream/:channel/:messageId', async (req, res) => {
     const { channel, messageId } = req.params;
@@ -1149,4 +1211,5 @@ async function refreshDatabase() {
 }
 
 startServer();
+
 
