@@ -1,5 +1,7 @@
+// BeatAnimesApi/src/anilist.js - FIXED VERSION
+
 function anilistSearchQuery(query, page, perPage = 10, type = "ANIME") {
-    return `query ($page: Int = ${page}, $id: Int, $type: MediaType = ${type}, $search: String = \"${query}\", $isAdult: Boolean = false, $size: Int = ${perPage}) { 
+    return `query ($page: Int = ${page}, $id: Int, $type: MediaType = ${type}, $search: String = "${query}", $isAdult: Boolean = false, $size: Int = ${perPage}) { 
         Page(page: $page, perPage: $size) { 
             pageInfo { 
                 total 
@@ -17,7 +19,7 @@ function anilistSearchQuery(query, page, perPage = 10, type = "ANIME") {
                     english 
                     native 
                 } 
-                bannerImage 
+                bannerImage
                 popularity 
                 coverImage { 
                     extraLarge 
@@ -59,7 +61,7 @@ function anilistTrendingQuery(page = 1, perPage = 10, type = "ANIME") {
                 genres 
                 description 
                 format 
-                bannerImage 
+                bannerImage
                 coverImage { 
                     extraLarge 
                     large 
@@ -87,7 +89,7 @@ function anilistMediaDetailQuery(id) {
                 english 
                 native 
             } 
-            bannerImage 
+            bannerImage
             popularity 
             coverImage { 
                 extraLarge 
@@ -177,8 +179,10 @@ async function searchAnilist(animeName) {
                 title: anime.title.english || anime.title.romaji,
                 titleRomaji: anime.title.romaji,
                 titleNative: anime.title.native,
-                image: anime.coverImage.large,
-                banner: anime.bannerImage,
+                image: anime.coverImage.large,           // ✅ Thumbnail for cards
+                banner: anime.bannerImage,               // ✅ Wide banner for slider
+                coverImage: anime.coverImage.large,      // ✅ Explicit cover
+                bannerImage: anime.bannerImage,          // ✅ Explicit banner
                 description: anime.description?.replace(/<[^>]*>/g, '') || 'No description available',
                 genres: anime.genres || [],
                 score: anime.averageScore,
