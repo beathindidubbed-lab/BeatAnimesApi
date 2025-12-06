@@ -1,4 +1,4 @@
-// BeatAnimesApi/src/server.js - COMPLETE WORKING VERSION
+// BeatAnimesApi/src/server.js - COMPLETE WORKING VERSION WITH ALL FIXES
 
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
@@ -14,8 +14,18 @@ const SESSION_STRING = process.env.SESSION_STRING || '';
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || '@BeatAnimes';
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 
-console.log('🔧 Configuration:');
-console.log(`   API_ID: ${API_ID ? '✅' : '❌'}`);
+if (!API_ID || isNaN(API_ID)) {
+    console.error('❌ API_ID must be a valid integer');
+    process.exit(1);
+}
+
+if (!API_HASH) {
+    console.error('❌ API_HASH is required');
+    process.exit(1);
+}
+
+console.log(`✅ Configuration loaded:`);
+console.log(`   API_ID: ${API_ID}`);
 console.log(`   API_HASH: ${API_HASH ? '✅' : '❌'}`);
 console.log(`   SESSION_STRING: ${SESSION_STRING ? '✅' : '❌'}`);
 console.log(`   BOT_TOKEN: ${BOT_TOKEN ? '✅' : '❌'}`);
@@ -204,12 +214,14 @@ async function scanTelegramChannel() {
 }
 
 // ============================================
-// CAPTION PARSER
+// ENHANCED CAPTION PARSER - Support Movies/OVA/Specials/Multi-Part
 // ============================================
+
 function parseAnimeCaption(captionOrFilename) {
     const originalText = captionOrFilename;
     
     let directUrl = null;
+    
     const urlPatterns = [
         /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i,
         /[\[\(](https?:\/\/[^\s<>"{}|\\^`\[\]]+)[\]\)]/i,
@@ -223,16 +235,29 @@ function parseAnimeCaption(captionOrFilename) {
             directUrl = directUrl.trim()
                 .replace(/[,;.\s]+$/, '')
                 .replace(/^["'\s]+|["'\s]+$/g, '');
+            
+            console.log(`✅ Extracted URL: "${directUrl}"`);
+            
             captionOrFilename = captionOrFilename.replace(match[0], '').trim();
             break;
         }
     }
     
+    console.log(`\n🔍 PARSING: "${originalText}"`);
+    if (directUrl) {
+        console.log(`   🔎 Found URL: "${directUrl}"`);
+    }
+    
     let text = captionOrFilename.replace(/\.(mp4|mkv|avi|mov|flv)$/i, '').trim();
+    console.log(`   Step 1 (remove extension): "${text}"`);
     
     const qualityMatch = text.match(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/i);
     const quality = qualityMatch ? qualityMatch[1].toLowerCase() : '720p';
     text = text.replace(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/gi, '').trim();
+    console.log(`   Step 2 (remove quality ${quality}): "${text}"`);
+    
+    text = text.replace(/[\[\(](2160p|1440p|1080p|720p|480p|360p|240p)[\]\)]/gi, '').trim();
+    console.log(`   Step 3 (remove [quality]): "${text}"`);
     
     let language = 'Japanese';
     const langMatch = text.match(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dual audio)\b/gi);
@@ -247,49 +272,74 @@ function parseAnimeCaption(captionOrFilename) {
         else if (lang.includes('dual')) language = 'Dual Audio';
     }
     text = text.replace(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)\b/gi, '').trim();
+    text = text.replace(/[\[\(](hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)[\]\)]/gi, '').trim();
+    console.log(`   Step 4 (remove language ${language}): "${text}"`);
     
     text = text.replace(/\b(HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)\b/gi, '').trim();
+    text = text.replace(/[\[\(](HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)[\]\)]/gi, '').trim();
+    console.log(`   Step 5 (remove format tags): "${text}"`);
+    
     text = text.replace(/\b\d+(\.\d+)?\s*(MB|GB|KB)\b/gi, '').trim();
     text = text.replace(/(@\w+|#\w+)/g, '').trim();
+    text = text.replace(/[\[\(]@\w+[\]\)]/g, '').trim();
+    console.log(`   Step 6 (remove tags): "${text}"`);
     
+    // Check for multi-part episodes
     let part = null;
     const partMatch = text.match(/\b(?:part|pt)[\s\-]*(\d+)(?:\s*of\s*(\d+))?\b/i);
     if (partMatch) {
         part = parseInt(partMatch[1]);
         text = text.replace(/\b(?:part|pt)[\s\-]*\d+(?:\s*of\s*\d+)?\b/gi, '').trim();
+        console.log(`   ✅ Detected part: ${part}`);
     }
     
+    // Check for content type keywords
     const contentTypeMatch = text.match(/\b(movie|ova|ona|special|recap)\b/i);
     let contentType = 'EPISODE';
     if (contentTypeMatch) {
         contentType = contentTypeMatch[1].toUpperCase();
         text = text.replace(/\b(movie|ova|ona|special|recap)\b/gi, '').trim();
+        console.log(`   ✅ Detected content type: ${contentType}`);
     }
     
     let title, season = 1, episode = 1;
     
+    // Pattern 1: S##E## format
     const pattern1 = /^(.+?)\s+S(\d+)\s*E[p]?(\d+)/i;
     const match1 = text.match(pattern1);
     if (match1) {
         title = match1[1].trim();
         season = parseInt(match1[2]);
         episode = parseInt(match1[3]);
+        console.log(`✅ Matched S##E##: Title="${title}" S${season}E${episode}`);
     } else {
+        text = text.replace(/\s*[\[\(]\d+p[\]\)]$/i, '').trim();
+        
+        // Pattern 2: Episode ## format
         const pattern2 = /^(.+?)(?:\s+(?:Episode|Ep|E))?\s+(\d+)$/i;
         const match2 = text.match(pattern2);
         if (match2) {
             title = match2[1].trim();
             episode = parseInt(match2[2]);
+            console.log(`✅ Matched Episode ##: Title="${title}" E${episode}`);
         } else {
+            // Pattern 3: Title-## format
             const pattern3 = /^(.+?)\s*[-–—]\s*(\d+)$/;
             const match3 = text.match(pattern3);
             if (match3) {
                 title = match3[1].trim();
                 episode = parseInt(match3[2]);
+                console.log(`✅ Matched Title-##: Title="${title}" E${episode}`);
             } else {
+                // If it's a movie/OVA/special, use full text as title
                 title = text.trim();
+                
+                // For movies, set episode to 0 to indicate standalone content
                 if (contentType === 'MOVIE' || contentType === 'OVA' || contentType === 'SPECIAL') {
                     episode = 0;
+                    console.log(`✅ ${contentType} detected: Title="${title}"`);
+                } else {
+                    console.log(`⚠️ No pattern matched, using full text: "${title}"`);
                 }
             }
         }
@@ -298,6 +348,9 @@ function parseAnimeCaption(captionOrFilename) {
     title = title.replace(/[\[\(][^\[\]\(\)]*[\]\)]/g, '').trim();
     title = title.replace(/\s+/g, ' ').trim();
     title = title.replace(/[-_\s]+$/g, '').trim();
+    title = title.replace(/^[-_\s]+/g, '').trim();
+    
+    console.log(`   ✅ FINAL: Title="${title}" | Type=${contentType} | S${season}E${episode} | Part=${part || 'None'} | ${quality} | ${language} | URL=${directUrl || 'None'}\n`);
     
     return { 
         title, 
@@ -313,7 +366,7 @@ function parseAnimeCaption(captionOrFilename) {
 }
 
 // ============================================
-// VIDEO PROCESSOR
+// VIDEO PROCESSOR - ENHANCED FOR MOVIES/OVA/MULTI-PART
 // ============================================
 async function processVideos(videoMessages) {
     console.log('🔧 Processing videos...');
@@ -324,6 +377,14 @@ async function processVideos(videoMessages) {
     for (const video of videoMessages) {
         const parsed = parseAnimeCaption(video.parseSource);
         const normalizedTitle = normalizeTitle(parsed.title);
+        
+        console.log(`📝 Raw: "${video.parseSource}"`);
+        console.log(`   → Title: "${parsed.title}"`);
+        console.log(`   → Type: ${parsed.contentType}`);
+        console.log(`   → Normalized: "${normalizedTitle}"`);
+        console.log(`   → S${parsed.season}E${parsed.episode} | Part ${parsed.part || 'N/A'} | ${parsed.quality} | ${parsed.language}`);
+        console.log(`   → Direct URL: ${parsed.directUrl || 'None'}`);
+        console.log('---');
         
         if (!animeMap.has(normalizedTitle)) {
             const anilistData = await searchAnilist(parsed.title);
@@ -366,6 +427,7 @@ async function processVideos(videoMessages) {
         }
         
         const episode = season.episodes.get(parsed.episode);
+        
         const finalDirectUrl = video.externalUrl || parsed.directUrl;
         
         const variantData = {
@@ -514,6 +576,8 @@ function searchAnime(query) {
 }
 
 function getAnimeDetails(animeId) {
+    console.log('🔍 Looking for anime:', animeId);
+    
     let anime = ANIME_DATABASE.find(a => a.id === animeId);
     
     if (!anime) {
@@ -530,8 +594,11 @@ function getAnimeDetails(animeId) {
     }
     
     if (!anime) {
+        console.error('❌ Anime not found');
         return { results: null };
     }
+    
+    console.log('✅ Found anime:', anime.title);
     
     const anilist = anime.anilistData;
     const episodes = [];
@@ -555,6 +622,8 @@ function getAnimeDetails(animeId) {
             name: anime.title,
             image: anilist?.image || `https://via.placeholder.com/300x400?text=${encodeURIComponent(anime.title)}`,
             banner: anilist?.banner,
+            coverImage: anilist?.image,
+            bannerImage: anilist?.banner,
             plot_summary: anilist?.description || '',
             other_name: anilist?.titleRomaji || anime.title,
             released: anilist?.year || new Date().getFullYear(),
@@ -568,9 +637,12 @@ function getAnimeDetails(animeId) {
 }
 
 function getEpisodeInfo(episodeId) {
+    console.log('🔍 Looking for episode:', episodeId);
+    
     const lastIndex = episodeId.lastIndexOf('-episode-');
     
     if (lastIndex === -1) {
+        console.error('❌ Invalid episode ID format:', episodeId);
         return { results: null };
     }
     
@@ -593,6 +665,7 @@ function getEpisodeInfo(episodeId) {
     }
     
     if (!anime) {
+        console.error('❌ Anime not found for ID:', animeId);
         return { results: null };
     }
     
@@ -606,6 +679,7 @@ function getEpisodeInfo(episodeId) {
     }
     
     if (!episodeData) {
+        console.error('❌ Episode not found:', episodeNum);
         return { results: null };
     }
     
@@ -637,18 +711,44 @@ app.get('/ping', (req, res) => {
     });
 });
 
+app.post('/refresh', async (req, res) => {
+    console.log('📡 Manual refresh requested');
+    
+    if (!SESSION_STRING) {
+        res.status(503).json({
+            success: false,
+            message: 'Telegram not connected'
+        });
+        return;
+    }
+    
+    const success = await refreshDatabase();
+    
+    res.json({
+        success: success,
+        animeCount: ANIME_DATABASE.length,
+        totalEpisodes: ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0),
+        timestamp: new Date().toISOString()
+    });
+});
+
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'BeatAnimes Telegram API',
+        message: 'BeatAnimes Telegram API - Complete Version',
         status: 'running',
         endpoints: {
             home: '/home',
             search: '/search/:query',
             anime: '/anime/:id',
             episode: '/episode/:id',
+            recent: '/recent/:page',
+            trending: '/trending/:page',
             stream: '/stream/:channel/:messageId',
             directStream: '/direct-stream/:channel/:messageId',
-            testBot: '/test/bot-token'
+            testBot: '/test/bot-token',
+            debug: '/debug/anime/:id',
+            ping: '/ping',
+            refresh: '/refresh (POST)'
         },
         stats: {
             totalAnime: ANIME_DATABASE.length,
@@ -689,7 +789,14 @@ app.get('/episode/:id', (req, res) => {
     res.json(result);
 });
 
-// ✅ Test bot token endpoint
+app.get('/recent/:page', (req, res) => {
+    res.json({ results: getHomeData().results.recent });
+});
+
+app.get('/trending/:page', (req, res) => {
+    res.json({ results: { trending: getHomeData().results.trending } });
+});
+
 app.get('/test/bot-token', async (req, res) => {
     if (!BOT_TOKEN) {
         return res.json({
@@ -727,7 +834,6 @@ app.get('/test/bot-token', async (req, res) => {
     }
 });
 
-// ✅ Direct stream endpoint - Simple redirect
 app.get('/direct-stream/:channel/:messageId', async (req, res) => {
     const { channel, messageId } = req.params;
     
@@ -789,9 +895,10 @@ app.get('/direct-stream/:channel/:messageId', async (req, res) => {
     }
 });
 
-// ✅ Stream endpoint - Returns JSON
 app.get('/stream/:channel/:messageId', async (req, res) => {
     const { channel, messageId } = req.params;
+    
+    console.log(`🎬 Stream request: ${channel}/${messageId}`);
     
     if (!BOT_TOKEN) {
         return res.json({
@@ -844,6 +951,8 @@ app.get('/stream/:channel/:messageId', async (req, res) => {
         
         const directUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
         
+        console.log('✅ Stream URL generated successfully');
+        
         res.json({
             success: true,
             videoUrl: directUrl,
@@ -852,7 +961,7 @@ app.get('/stream/:channel/:messageId', async (req, res) => {
         });
         
     } catch (error) {
-        console.error('Stream error:', error);
+        console.error('❌ Stream error:', error);
         res.status(500).json({ 
             success: false,
             telegramUrl: `https://t.me/${channel}/${messageId}`,
@@ -861,27 +970,53 @@ app.get('/stream/:channel/:messageId', async (req, res) => {
     }
 });
 
-async function refreshDatabase() {
-    console.log('🔄 Refreshing database...');
-    try {
-        const videos = await scanTelegramChannel();
-        ANIME_DATABASE = await processVideos(videos);
-        
-        console.log('\n' + '═'.repeat(60));
-        console.log('📊 DATABASE UPDATED');
-        console.log('═'.repeat(60));
-        console.log(`📺 Total Anime: ${ANIME_DATABASE.length}`);
-        console.log(`🎬 Total Episodes: ${ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0)}`);
-        console.log(`⏰ Last Updated: ${new Date().toLocaleString()}`);
-        console.log('═'.repeat(60) + '\n');
-        
-        return true;
-    } catch (error) {
-        console.error('❌ Refresh failed:', error.message);
-        return false;
+app.get('/debug/anime/:id', (req, res) => {
+    const animeId = req.params.id;
+    
+    let anime = ANIME_DATABASE.find(a => a.id === animeId);
+    
+    if (!anime) {
+        const normalizedQuery = normalizeTitle(animeId);
+        anime = ANIME_DATABASE.find(a => a.normalizedTitle === normalizedQuery);
     }
-}
+    
+    if (!anime) {
+        res.json({
+            error: 'Anime not found',
+            searchedId: animeId,
+            availableIds: ANIME_DATABASE.slice(0, 20).map(a => ({
+                id: a.id,
+                title: a.title,
+                normalizedTitle: a.normalizedTitle,
+                episodeCount: a.totalEpisodes
+            }))
+        });
+        return;
+    }
+    
+    res.json({
+        anime: {
+            id: anime.id,
+            title: anime.title,
+            normalizedTitle: anime.normalizedTitle,
+            totalEpisodes: anime.totalEpisodes
+        },
+        episodes: anime.seasons.flatMap(season => 
+            season.episodes.map(ep => ({
+                episodeNumber: ep.episode,
+                episodeId: `${anime.id}-episode-${ep.episode}`,
+                variantCount: ep.variants.length,
+                languages: [...new Set(ep.variants.map(v => v.language))],
+                qualities: [...new Set(ep.variants.map(v => v.quality))],
+                firstVariant: ep.variants[0]
+            }))
+        )
+    });
+});
 
+// ============================================
+// MAIN STARTUP
+// ============================================
 async function startServer() {
     console.log('🚀 Starting BeatAnimes Telegram API...\n');
     
@@ -910,6 +1045,27 @@ async function startServer() {
     } catch (error) {
         console.error('❌ Startup error:', error);
         console.error('Stack:', error.stack);
+    }
+}
+
+async function refreshDatabase() {
+    console.log('🔄 Refreshing database...');
+    try {
+        const videos = await scanTelegramChannel();
+        ANIME_DATABASE = await processVideos(videos);
+        
+        console.log('\n' + '═'.repeat(60));
+        console.log('📊 DATABASE UPDATED');
+        console.log('═'.repeat(60));
+        console.log(`📺 Total Anime: ${ANIME_DATABASE.length}`);
+        console.log(`🎬 Total Episodes: ${ANIME_DATABASE.reduce((sum, a) => sum + a.totalEpisodes, 0)}`);
+        console.log(`⏰ Last Updated: ${new Date().toLocaleString()}`);
+        console.log('═'.repeat(60) + '\n');
+        
+        return true;
+    } catch (error) {
+        console.error('❌ Refresh failed:', error.message);
+        return false;
     }
 }
 
