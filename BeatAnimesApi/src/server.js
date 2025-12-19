@@ -138,14 +138,17 @@ function normalizeTitle(title) {
         .trim();
 }
 
+// ============================================
+// SCAN TELEGRAM FOR URL MESSAGES
+// ============================================
 async function scanTelegramChannel() {
     if (!client) {
         throw new Error('Telegram client not initialized');
     }
     
-    console.log('📡 Scanning Telegram channel...');
+    console.log('📡 Scanning Telegram channel for video URLs...');
     
-    const videos = [];
+    const videoMessages = [];
     
     try {
         const channel = await client.getEntity(CHANNEL_USERNAME);
@@ -157,55 +160,33 @@ async function scanTelegramChannel() {
         
         console.log(`📬 Found ${messages.length} messages`);
         
-        let lastTextMessage = null;
-        
         for (const message of messages) {
-            if (message.message && !message.video && !message.document) {
-                lastTextMessage = message.message;
-                continue;
-            }
+            if (!message.message) continue;
             
-            if (message.video || (message.document && message.document.mimeType?.startsWith('video/'))) {
-                const video = message.video || message.document;
-                
-                let filename = '';
-                if (video.attributes) {
-                    for (const attr of video.attributes) {
-                        if (attr.fileName) {
-                            filename = attr.fileName;
-                            break;
-                        }
-                    }
-                }
-                
-                const caption = message.message || '';
-                const parseSource = caption || filename || 'Unknown';
-                
-                let externalUrl = null;
-                if (lastTextMessage) {
-                    const urlMatch = lastTextMessage.match(/(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i);
-                    if (urlMatch) {
-                        externalUrl = urlMatch[1];
-                    }
-                }
-                
-                videos.push({
-                    messageId: message.id,
-                    filename: filename,
-                    caption: caption,
-                    parseSource: parseSource,
-                    externalUrl: externalUrl,
-                    fileSize: video.size || 0,
-                    duration: video.attributes?.find(a => a.duration)?.duration || 0,
-                    date: message.date
-                });
-                
-                lastTextMessage = null;
-            }
+            const text = message.message;
+            
+            // Extract URL from message
+            const urlMatch = text.match(/(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i);
+            if (!urlMatch) continue;
+            
+            const videoUrl = urlMatch[1].trim()
+                .replace(/[,;.\s]+$/, '')
+                .replace(/^["'\s]+|["'\s]+$/g, '');
+            
+            // Remove URL from text to get caption
+            const caption = text.replace(urlMatch[0], '').trim();
+            
+            videoMessages.push({
+                messageId: message.id,
+                videoUrl: videoUrl,
+                caption: caption,
+                date: message.date,
+                rawText: text
+            });
         }
         
-        console.log(`🎬 Found ${videos.length} videos`);
-        return videos;
+        console.log(`🎬 Found ${videoMessages.length} video URLs`);
+        return videoMessages;
         
     } catch (error) {
         console.error('❌ Channel scan error:', error.message);
@@ -214,51 +195,23 @@ async function scanTelegramChannel() {
 }
 
 // ============================================
-// ENHANCED CAPTION PARSER - Support Movies/OVA/Specials/Multi-Part
+// ENHANCED CAPTION PARSER
 // ============================================
-
-function parseAnimeCaption(captionOrFilename) {
-    const originalText = captionOrFilename;
+function parseAnimeCaption(caption) {
+    console.log(`\n🔍 PARSING: "${caption}"`);
     
-    let directUrl = null;
+    let text = caption.trim();
     
-    const urlPatterns = [
-        /(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i,
-        /[\[\(](https?:\/\/[^\s<>"{}|\\^`\[\]]+)[\]\)]/i,
-        /(?:link|url|download|watch):\s*(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/i
-    ];
-    
-    for (const pattern of urlPatterns) {
-        const match = captionOrFilename.match(pattern);
-        if (match) {
-            directUrl = match[1] || match[0];
-            directUrl = directUrl.trim()
-                .replace(/[,;.\s]+$/, '')
-                .replace(/^["'\s]+|["'\s]+$/g, '');
-            
-            console.log(`✅ Extracted URL: "${directUrl}"`);
-            
-            captionOrFilename = captionOrFilename.replace(match[0], '').trim();
-            break;
-        }
-    }
-    
-    console.log(`\n🔍 PARSING: "${originalText}"`);
-    if (directUrl) {
-        console.log(`   🔎 Found URL: "${directUrl}"`);
-    }
-    
-    let text = captionOrFilename.replace(/\.(mp4|mkv|avi|mov|flv)$/i, '').trim();
-    console.log(`   Step 1 (remove extension): "${text}"`);
-    
+    // Extract quality
     const qualityMatch = text.match(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/i);
     const quality = qualityMatch ? qualityMatch[1].toLowerCase() : '720p';
     text = text.replace(/\b(2160p|1440p|1080p|720p|480p|360p|240p)\b/gi, '').trim();
-    console.log(`   Step 2 (remove quality ${quality}): "${text}"`);
+    console.log(`   Step 1 (remove quality ${quality}): "${text}"`);
     
     text = text.replace(/[\[\(](2160p|1440p|1080p|720p|480p|360p|240p)[\]\)]/gi, '').trim();
-    console.log(`   Step 3 (remove [quality]): "${text}"`);
+    console.log(`   Step 2 (remove [quality]): "${text}"`);
     
+    // Extract language
     let language = 'Japanese';
     const langMatch = text.match(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dual audio)\b/gi);
     if (langMatch) {
@@ -273,16 +226,18 @@ function parseAnimeCaption(captionOrFilename) {
     }
     text = text.replace(/\b(hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)\b/gi, '').trim();
     text = text.replace(/[\[\(](hindi|english|japanese|tamil|telugu|malayalam|kannada|dubbed?|dub|sub|subbed|dual audio|audio)[\]\)]/gi, '').trim();
-    console.log(`   Step 4 (remove language ${language}): "${text}"`);
+    console.log(`   Step 3 (remove language ${language}): "${text}"`);
     
+    // Remove format tags
     text = text.replace(/\b(HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)\b/gi, '').trim();
     text = text.replace(/[\[\(](HD|HEVC|x264|x265|AAC|AC3|BluRay|WEB-DL|WEBRip|HDRip)[\]\)]/gi, '').trim();
-    console.log(`   Step 5 (remove format tags): "${text}"`);
+    console.log(`   Step 4 (remove format tags): "${text}"`);
     
+    // Remove file size and tags
     text = text.replace(/\b\d+(\.\d+)?\s*(MB|GB|KB)\b/gi, '').trim();
     text = text.replace(/(@\w+|#\w+)/g, '').trim();
     text = text.replace(/[\[\(]@\w+[\]\)]/g, '').trim();
-    console.log(`   Step 6 (remove tags): "${text}"`);
+    console.log(`   Step 5 (remove tags): "${text}"`);
     
     // Check for multi-part episodes
     let part = null;
@@ -345,12 +300,13 @@ function parseAnimeCaption(captionOrFilename) {
         }
     }
     
+    // Clean up title
     title = title.replace(/[\[\(][^\[\]\(\)]*[\]\)]/g, '').trim();
     title = title.replace(/\s+/g, ' ').trim();
     title = title.replace(/[-_\s]+$/g, '').trim();
     title = title.replace(/^[-_\s]+/g, '').trim();
     
-    console.log(`   ✅ FINAL: Title="${title}" | Type=${contentType} | S${season}E${episode} | Part=${part || 'None'} | ${quality} | ${language} | URL=${directUrl || 'None'}\n`);
+    console.log(`   ✅ FINAL: Title="${title}" | Type=${contentType} | S${season}E${episode} | Part=${part || 'None'} | ${quality} | ${language}\n`);
     
     return { 
         title, 
@@ -358,32 +314,28 @@ function parseAnimeCaption(captionOrFilename) {
         episode, 
         quality, 
         language, 
-        directUrl,
-        rawName: originalText,
         contentType,
         part
     };
 }
-
 // ============================================
-// VIDEO PROCESSOR - ENHANCED FOR MOVIES/OVA/MULTI-PART
+// VIDEO PROCESSOR - URL-BASED (ENHANCED FOR MOVIES/OVA/MULTI-PART)
 // ============================================
-async function processVideos(videoMessages) {
-    console.log('🔧 Processing videos...');
+async function processVideoMessages(videoMessages) {
+    console.log('🔧 Processing video messages...');
     
     const animeMap = new Map();
-    const channelName = CHANNEL_USERNAME.replace('@', '');
     
-    for (const video of videoMessages) {
-        const parsed = parseAnimeCaption(video.parseSource);
+    for (const msg of videoMessages) {
+        const parsed = parseAnimeCaption(msg.caption || 'Unknown');
         const normalizedTitle = normalizeTitle(parsed.title);
         
-        console.log(`📝 Raw: "${video.parseSource}"`);
+        console.log(`📝 Raw: "${msg.caption}"`);
         console.log(`   → Title: "${parsed.title}"`);
         console.log(`   → Type: ${parsed.contentType}`);
         console.log(`   → Normalized: "${normalizedTitle}"`);
         console.log(`   → S${parsed.season}E${parsed.episode} | Part ${parsed.part || 'N/A'} | ${parsed.quality} | ${parsed.language}`);
-        console.log(`   → Direct URL: ${parsed.directUrl || 'None'}`);
+        console.log(`   → Direct URL: ${msg.videoUrl}`);
         console.log('---');
         
         if (!animeMap.has(normalizedTitle)) {
@@ -428,20 +380,16 @@ async function processVideos(videoMessages) {
         
         const episode = season.episodes.get(parsed.episode);
         
-        const finalDirectUrl = video.externalUrl || parsed.directUrl;
-        
+        // ✅ ESSENTIAL FIELDS ONLY - Clean and simple
         const variantData = {
             quality: parsed.quality,
             language: parsed.language,
-            messageId: video.messageId,
-            filename: video.filename,
-            caption: video.caption,
-            directUrl: finalDirectUrl,
-            fileSize: video.fileSize,
-            duration: video.duration,
-            date: video.date,
-            channelName: channelName,
-            videoUrl: finalDirectUrl || `${channelName}/${video.messageId}`,
+            messageId: msg.messageId,
+            caption: msg.caption,
+            directUrl: msg.videoUrl,
+            videoUrl: msg.videoUrl,
+            date: msg.date,
+            rawText: msg.rawText,
             contentType: parsed.contentType,
             part: parsed.part
         };
@@ -734,7 +682,7 @@ app.post('/refresh', async (req, res) => {
 
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'BeatAnimes Telegram API - Complete Version',
+        message: 'BeatAnimes URL-Based Video API',
         status: 'running',
         endpoints: {
             home: '/home',
@@ -743,10 +691,6 @@ app.get('/', (req, res) => {
             episode: '/episode/:id',
             recent: '/recent/:page',
             trending: '/trending/:page',
-            stream: '/stream/:channel/:messageId',
-            directStream: '/direct-stream/:channel/:messageId',
-            testBot: '/test/bot-token',
-            debug: '/debug/anime/:id',
             ping: '/ping',
             refresh: '/refresh (POST)'
         },
@@ -797,178 +741,6 @@ app.get('/trending/:page', (req, res) => {
     res.json({ results: { trending: getHomeData().results.trending } });
 });
 
-app.get('/test/bot-token', async (req, res) => {
-    if (!BOT_TOKEN) {
-        return res.json({
-            configured: false,
-            message: 'BOT_TOKEN environment variable not set'
-        });
-    }
-    
-    try {
-        const response = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getMe`
-        );
-        const data = await response.json();
-        
-        if (data.ok) {
-            res.json({
-                configured: true,
-                botUsername: data.result.username,
-                botName: data.result.first_name,
-                canStream: true
-            });
-        } else {
-            res.json({
-                configured: false,
-                error: data.description,
-                message: 'Bot token is invalid'
-            });
-        }
-    } catch (error) {
-        res.json({
-            configured: false,
-            error: error.message,
-            message: 'Failed to verify bot token'
-        });
-    }
-});
-
-app.get('/direct-stream/:channel/:messageId', async (req, res) => {
-    const { channel, messageId } = req.params;
-    
-    if (!BOT_TOKEN) {
-        return res.redirect(`https://t.me/${channel}/${messageId}`);
-    }
-    
-    try {
-        const chatResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${channel}`
-        );
-        const chatData = await chatResponse.json();
-        
-        if (!chatData.ok) {
-            return res.redirect(`https://t.me/${channel}/${messageId}`);
-        }
-        
-        const chatId = chatData.result.id;
-        
-        const forwardResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/forwardMessage`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    from_chat_id: chatId,
-                    message_id: parseInt(messageId)
-                })
-            }
-        );
-        const forwardData = await forwardResponse.json();
-        
-        if (!forwardData.ok) {
-            return res.redirect(`https://t.me/${channel}/${messageId}`);
-        }
-        
-        const fileId = forwardData.result.video?.file_id || forwardData.result.document?.file_id;
-        
-        if (!fileId) {
-            return res.redirect(`https://t.me/${channel}/${messageId}`);
-        }
-        
-        const fileResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`
-        );
-        const fileData = await fileResponse.json();
-        
-        if (!fileData.ok) {
-            return res.redirect(`https://t.me/${channel}/${messageId}`);
-        }
-        
-        const directUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-        res.redirect(directUrl);
-        
-    } catch (error) {
-        console.error('Direct stream error:', error);
-        res.redirect(`https://t.me/${channel}/${messageId}`);
-    }
-});
-
-app.get('/stream/:channel/:messageId', async (req, res) => {
-    const { channel, messageId } = req.params;
-    
-    console.log(`🎬 Stream request: ${channel}/${messageId}`);
-    
-    if (!BOT_TOKEN) {
-        return res.json({
-            success: false,
-            telegramUrl: `https://t.me/${channel}/${messageId}`,
-            message: 'Bot token not configured'
-        });
-    }
-    
-    try {
-        const chatResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${channel}`
-        );
-        const chatData = await chatResponse.json();
-        
-        if (!chatData.ok) {
-            throw new Error('Failed to get chat info');
-        }
-        
-        const chatId = chatData.result.id;
-        
-        const forwardResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/forwardMessage`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    from_chat_id: chatId,
-                    message_id: parseInt(messageId)
-                })
-            }
-        );
-        const forwardData = await forwardResponse.json();
-        
-        if (!forwardData.ok || (!forwardData.result.video && !forwardData.result.document)) {
-            throw new Error('Video not found');
-        }
-        
-        const fileId = forwardData.result.video?.file_id || forwardData.result.document?.file_id;
-        
-        const fileResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`
-        );
-        const fileData = await fileResponse.json();
-        
-        if (!fileData.ok) {
-            throw new Error('Failed to get file info');
-        }
-        
-        const directUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-        
-        console.log('✅ Stream URL generated successfully');
-        
-        res.json({
-            success: true,
-            videoUrl: directUrl,
-            streamUrl: directUrl,
-            url: directUrl
-        });
-        
-    } catch (error) {
-        console.error('❌ Stream error:', error);
-        res.status(500).json({ 
-            success: false,
-            telegramUrl: `https://t.me/${channel}/${messageId}`,
-            message: error.message
-        });
-    }
-});
 
 app.get('/debug/anime/:id', (req, res) => {
     const animeId = req.params.id;
@@ -1051,8 +823,8 @@ async function startServer() {
 async function refreshDatabase() {
     console.log('🔄 Refreshing database...');
     try {
-        const videos = await scanTelegramChannel();
-        ANIME_DATABASE = await processVideos(videos);
+        const videoMessages = await scanTelegramChannel();
+        ANIME_DATABASE = await processVideoMessages(videoMessages);
         
         console.log('\n' + '═'.repeat(60));
         console.log('📊 DATABASE UPDATED');
@@ -1070,3 +842,4 @@ async function refreshDatabase() {
 }
 
 startServer();
+
